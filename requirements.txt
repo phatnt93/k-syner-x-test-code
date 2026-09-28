@@ -1,0 +1,9 @@
+# Runtime dependencies (single source; pyproject.toml reads this file).
+fastapi==0.141.1
+uvicorn[standard]==0.54.0
+pydantic-settings==2.15.0
+sqlalchemy[asyncio]==2.1.1
+psycopg[binary]==3.3.6
+alembic==1.20.0
+httpx==0.28.1
+python-multipart==0.0.32
