@@ -1,5 +1,6 @@
 from functools import lru_cache
 
+from pydantic import SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from sqlalchemy import URL
 
@@ -22,6 +23,10 @@ class Settings(BaseSettings):
     db_echo: bool = False
 
     log_level: str = "INFO"
+
+    # Static bearer token of the Vietful emulator (extension E1). The emulator requires it on its Vietful
+    # routes; CDMS sends it when polling. No default: set it in `.env`.
+    inventory_api_token: SecretStr | None = None
 
     def _url(self, database: str) -> str:
         # URL.create escapes special characters in the password.

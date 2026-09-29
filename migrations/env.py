@@ -9,7 +9,8 @@ from logging.config import fileConfig
 from alembic import context
 from sqlalchemy import create_engine, pool
 
-import cdms.db.models  # noqa: F401  # registers every model on Base.metadata
+import cdms.db.models  # registers every CDMS model on Base.metadata
+import cdms.emulator.models  # noqa: F401  # emulator tables (schema `vietful`), same database (D12)
 from cdms.config import get_settings
 from cdms.db.base import Base
 
@@ -19,6 +20,13 @@ if config.config_file_name is not None and config.attributes.get("configure_logg
 
 target_metadata = Base.metadata
 
+# Schemas owned by this project: default (None = public) and the emulator's; others are never compared.
+SCHEMAS = {None, "vietful"}
+
+
+def _include_name(name: str | None, type_: str, _parent_names: object) -> bool:
+    return name in SCHEMAS if type_ == "schema" else True
+
 
 def _url() -> str:
     url: str | None = config.attributes.get("url") or context.get_x_argument(as_dictionary=True).get("url")
@@ -27,7 +35,12 @@ def _url() -> str:
 
 def run_migrations_offline() -> None:
     context.configure(
-        url=_url(), target_metadata=target_metadata, literal_binds=True, compare_server_default=True
+        url=_url(),
+        target_metadata=target_metadata,
+        literal_binds=True,
+        compare_server_default=True,
+        include_schemas=True,
+        include_name=_include_name,
     )
     with context.begin_transaction():
         context.run_migrations()
@@ -36,7 +49,13 @@ def run_migrations_offline() -> None:
 def run_migrations_online() -> None:
     engine = create_engine(_url(), poolclass=pool.NullPool)
     with engine.connect() as connection:
-        context.configure(connection=connection, target_metadata=target_metadata, compare_server_default=True)
+        context.configure(
+            connection=connection,
+            target_metadata=target_metadata,
+            compare_server_default=True,
+            include_schemas=True,
+            include_name=_include_name,
+        )
         with context.begin_transaction():
             context.run_migrations()
     engine.dispose()

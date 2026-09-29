@@ -7,3 +7,5 @@ psycopg[binary]==3.3.6
 alembic==1.20.0
 httpx==0.28.1
 python-multipart==0.0.32
+# Vietful emulator data (cdms.emulator)
+Faker==40.39.0

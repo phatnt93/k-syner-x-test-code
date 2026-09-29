@@ -1,4 +1,5 @@
 import asyncio
+import os
 import sys
 from collections.abc import AsyncIterator, Iterator
 from pathlib import Path
@@ -11,6 +12,9 @@ from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
 from cdms.config import get_settings
 
 ROOT = Path(__file__).resolve().parents[1]
+
+# Tests never depend on the developer's real token; set before any module reads the settings.
+os.environ["INVENTORY_API_TOKEN"] = "test-emulator-token"
 
 if sys.platform == "win32":
     # Async psycopg needs a selector loop on Windows (see cdms.loop).
