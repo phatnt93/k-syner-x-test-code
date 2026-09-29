@@ -4,6 +4,7 @@ from typing import Any
 from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
+from sqlalchemy.exc import InterfaceError, OperationalError
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 log = logging.getLogger(__name__)
@@ -39,6 +40,12 @@ def install_error_handlers(app: FastAPI) -> None:
     async def _http_error(_: Request, exc: StarletteHTTPException) -> JSONResponse:
         code = "NOT_FOUND" if exc.status_code == 404 else f"HTTP_{exc.status_code}"
         return JSONResponse(_body(code, str(exc.detail)), status_code=exc.status_code)
+
+    @app.exception_handler(OperationalError)
+    @app.exception_handler(InterfaceError)
+    async def _database_unavailable(_: Request, exc: Exception) -> JSONResponse:
+        log.warning("database unavailable: %s", type(exc).__name__)
+        return JSONResponse(_body("UNAVAILABLE", "Database unavailable"), status_code=503)
 
     @app.exception_handler(Exception)
     async def _unexpected(_: Request, exc: Exception) -> JSONResponse:

@@ -5,7 +5,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 
 from cdms.api.errors import install_error_handlers
-from cdms.api.routes import health, polling, webhooks
+from cdms.api.routes import health, ops, polling, products, webhooks
 from cdms.config import get_settings
 from cdms.db.session import engine
 
@@ -23,6 +23,8 @@ def create_app() -> FastAPI:
     app.include_router(health.router)
     app.include_router(webhooks.router)
     app.include_router(polling.router)
+    app.include_router(products.router)
+    app.include_router(ops.router)
     return app
 
 
