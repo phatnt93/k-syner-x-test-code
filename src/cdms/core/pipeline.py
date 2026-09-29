@@ -6,13 +6,14 @@ counter updates of the same unit of work, so everything commits atomically. On `
 the caller rolls back and retries the whole unit; a retry is idempotent.
 """
 
+from collections import Counter
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from datetime import datetime
 from enum import StrEnum
 from typing import Any
 
-from sqlalchemy import func, insert, select, update
+from sqlalchemy import insert, select, text, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import InstrumentedAttribute
@@ -127,17 +128,7 @@ async def apply_observation(session: AsyncSession, obs: ProductObservation) -> A
 
     if fp == current.fingerprint:
         if obs.observed_at > current.observed_at:
-            # Remember that the state was still current at this later time: otherwise an older, different
-            # state delivered late (e.g. a webhook retry) would be accepted as newer and revert the product.
-            await session.execute(
-                update(Product)
-                .where(Product.partner_sku == sku)
-                .values(
-                    observed_at=obs.observed_at,
-                    product_id=func.coalesce(obs.product["productId"], Product.product_id),
-                    updated_at=Product.updated_at,  # not a change: keep the last-change time
-                )
-            )
+            await _advance_observed_at(session, [obs])
         return ApplyResult(sku, Outcome.UNCHANGED, current.version)
 
     new_version = current.version + 1
@@ -164,13 +155,79 @@ async def apply_observations(
 ) -> list[ApplyResult]:
     """Apply a batch (a poll page, an Excel chunk) in one transaction; results are in input order.
 
-    Rows are locked in `partner_sku` order so two concurrent batches cannot deadlock. The sort is stable, so
-    several observations of the same product (duplicate Excel rows) keep their input order.
+    Same outcomes as calling `apply_observation` for each item in `partner_sku` order, but cheaper when most
+    items did not change (a poll re-scan): docs/project-info/ISSUES.md I-01.
+
+    1. Lock every existing row of the batch in one `SELECT … ORDER BY partner_sku FOR UPDATE` (sorted, so two
+       concurrent batches cannot deadlock on these rows) and read version / fingerprint / observed_at.
+    2. Decide STALE / UNCHANGED for those rows here; advance `observed_at` of the UNCHANGED-and-newer ones in
+       one statement. The rows stay locked until commit, so the decisions cannot go stale.
+    3. Everything else — new products, real changes, and every occurrence of a key that appears more than once
+       in the batch (input order matters there) — goes through `apply_observation`, sorted by key; the sort is
+       stable, so duplicates keep their input order.
     """
     results: list[ApplyResult | None] = [None] * len(observations)
-    for index in sorted(range(len(observations)), key=lambda i: observations[i].partner_sku):
+    occurrences = Counter(obs.partner_sku for obs in observations)
+    existing = {
+        row.partner_sku: row
+        for row in await session.execute(
+            select(Product.partner_sku, Product.version, Product.fingerprint, Product.observed_at)
+            .where(Product.partner_sku.in_(sorted(occurrences)))
+            .order_by(Product.partner_sku)
+            .with_for_update()
+        )
+    }
+
+    advance: list[ProductObservation] = []
+    slow: list[int] = []
+    for index, obs in enumerate(observations):
+        current = existing.get(obs.partner_sku)
+        if current is None or occurrences[obs.partner_sku] > 1:
+            slow.append(index)
+        elif obs.observed_at < current.observed_at:
+            results[index] = ApplyResult(obs.partner_sku, Outcome.STALE, current.version)
+        elif fingerprint(obs.product) == current.fingerprint:
+            results[index] = ApplyResult(obs.partner_sku, Outcome.UNCHANGED, current.version)
+            if obs.observed_at > current.observed_at:
+                advance.append(obs)
+        else:
+            slow.append(index)
+    if advance:
+        await _advance_observed_at(session, advance)
+
+    for index in sorted(slow, key=lambda i: observations[i].partner_sku):
         results[index] = await apply_observation(session, observations[index])
     return [result for result in results if result is not None]
+
+
+async def _advance_observed_at(session: AsyncSession, observations: Sequence[ProductObservation]) -> None:
+    """UNCHANGED with a newer observation: remember that the state was still current at that later time.
+
+    Otherwise an older, different state delivered late (e.g. a webhook retry) would be accepted as newer and
+    revert the product (D4). Also fills `product_id` when it was unknown. Not a change: `updated_at` is kept.
+    """
+    # One statement for the whole batch (an executemany costs a round trip per row), with three array
+    # parameters instead of a VALUES list: the SQL text never changes, so it is compiled once, not per page.
+    await session.execute(
+        _ADVANCE_OBSERVED_AT,
+        {
+            "skus": [obs.partner_sku for obs in observations],
+            "observed": [obs.observed_at for obs in observations],
+            "product_ids": [obs.product["productId"] for obs in observations],
+        },
+    )
+
+
+# Raw SQL does not fire the ORM `onupdate` of `updated_at`, which is what we want: this is not a change.
+_ADVANCE_OBSERVED_AT = text(
+    """
+    UPDATE products AS p
+    SET observed_at = v.observed_at, product_id = COALESCE(v.product_id, p.product_id)
+    FROM unnest(CAST(:skus AS text[]), CAST(:observed AS timestamptz[]), CAST(:product_ids AS bigint[]))
+         AS v (partner_sku, observed_at, product_id)
+    WHERE p.partner_sku = v.partner_sku
+    """
+)
 
 
 async def _record_change(

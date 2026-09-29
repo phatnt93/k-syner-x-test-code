@@ -21,12 +21,17 @@ class Settings(BaseSettings):
     db_pool_size: int = 10
     db_max_overflow: int = 10
     db_echo: bool = False
+    db_connect_timeout_s: int = 5
 
     log_level: str = "INFO"
 
     # Static bearer token of the Vietful emulator (extension E1). The emulator requires it on its Vietful
     # routes; CDMS sends it when polling. No default: set it in `.env`.
     inventory_api_token: SecretStr | None = None
+    # Where CDMS finds the inventory service (the emulator locally; the real Vietful would only change this).
+    inventory_base_url: str = "http://localhost:8101"
+    # Shared secret of the webhook HMAC (`x-vf-hmacsha256`, D5): CDMS verifies, the emulator signs.
+    webhook_secret: SecretStr | None = None
 
     def _url(self, database: str) -> str:
         # URL.create escapes special characters in the password.

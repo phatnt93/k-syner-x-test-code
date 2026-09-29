@@ -4,6 +4,7 @@ Each test uses its own partner_sku, so tests do not interfere on the shared test
 """
 
 import asyncio
+import random
 import uuid
 from collections import Counter
 from collections.abc import AsyncIterator
@@ -11,7 +12,7 @@ from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import pytest
-from sqlalchemy import Row, select
+from sqlalchemy import Row, event, select
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker, create_async_engine
 
 from cdms.core.fingerprint import fingerprint
@@ -309,3 +310,119 @@ async def test_concurrent_different_states_keep_a_consistent_history(
     assert [c.observed_at for c in changes] == sorted(c.observed_at for c in changes)
     assert (await state_of(db_engine, sku)).product_name == f"name-{WRITERS - 1}"
     await assert_history_is_consistent(db_engine, sku)
+
+
+# --- batch fast path (docs/project-info/ISSUES.md I-01) ---------------------------------------------------
+
+
+def mixed_batch(prefix: str) -> tuple[list[ProductObservation], list[ProductObservation]]:
+    """(setup, batch) covering every outcome, duplicates included, for keys starting with `prefix`."""
+    k = [f"{prefix}-{i}" for i in range(7)]
+    t1, t2 = T0 + timedelta(minutes=1), T0 + timedelta(minutes=2)
+    setup = [obs(key, T0, productName="A") for key in k[:5]] + [obs(k[5], t2, productName="A")]
+    batch = [
+        obs(k[0], t1, productName="A"),  # unchanged, newer → observed_at advanced
+        obs(k[1], T0, productName="A"),  # unchanged, same time
+        obs(k[2], t1, productName="B"),  # changed
+        obs(k[5], t1, productName="B"),  # stale
+        obs(k[6], t1, productName="A"),  # new
+        obs(k[3], t1, productName="B"),  # duplicate key: changed, back, again unchanged
+        obs(k[3], t1, productName="A"),
+        obs(k[3], t2, productName="A"),
+        obs(k[4], t1, productId=77, productName="A"),  # unchanged, fills product_id
+    ]
+    return setup, batch
+
+
+async def test_batch_fast_path_matches_one_by_one(sessions: Sessions, db_engine: AsyncEngine) -> None:
+    prefix_fast, prefix_slow = new_sku(), new_sku()
+    setup_fast, batch_fast = mixed_batch(prefix_fast)
+    setup_slow, batch_slow = mixed_batch(prefix_slow)
+    for o in setup_fast + setup_slow:
+        await apply(sessions, o)
+
+    async with sessions() as session, session.begin():
+        fast = await apply_observations(session, batch_fast)
+    async with sessions() as session, session.begin():
+        order = sorted(range(len(batch_slow)), key=lambda i: batch_slow[i].partner_sku)
+        by_index = {i: await apply_observation(session, batch_slow[i]) for i in order}
+        slow = [by_index[i] for i in range(len(batch_slow))]
+
+    def strip(key: str) -> str:
+        return key.split("-")[-1]
+
+    assert [(strip(r.partner_sku), r.outcome, r.version) for r in fast] == [
+        (strip(r.partner_sku), r.outcome, r.version) for r in slow
+    ]
+    assert [r.outcome for r in fast] == [
+        Outcome.UNCHANGED, Outcome.UNCHANGED, Outcome.UPDATED, Outcome.STALE, Outcome.CREATED,
+        Outcome.UPDATED, Outcome.UPDATED, Outcome.UNCHANGED, Outcome.UNCHANGED,
+    ]  # fmt: skip
+    for i in range(7):
+        fast_state = await state_of(db_engine, f"{prefix_fast}-{i}")
+        slow_state = await state_of(db_engine, f"{prefix_slow}-{i}")
+        # (fingerprints differ only because `obs` copies the key into `sku`)
+        columns = ("version", "product_name", "observed_at", "product_id")
+        assert [getattr(fast_state, c) for c in columns] == [getattr(slow_state, c) for c in columns]
+        await assert_history_is_consistent(db_engine, f"{prefix_fast}-{i}")
+
+
+async def test_unchanged_page_costs_two_statements(sessions: Sessions, db_engine: AsyncEngine) -> None:
+    keys = [new_sku() for _ in range(50)]
+    async with sessions() as session, session.begin():
+        await apply_observations(session, [obs(key, T0) for key in keys])
+    statements: list[str] = []
+
+    def count(*args: Any) -> None:
+        statements.append(args[2])
+
+    event.listen(db_engine.sync_engine, "before_cursor_execute", count)
+    try:
+        async with sessions() as session, session.begin():
+            results = await apply_observations(session, [obs(key, T0 + timedelta(minutes=1)) for key in keys])
+    finally:
+        event.remove(db_engine.sync_engine, "before_cursor_execute", count)
+
+    assert {r.outcome for r in results} == {Outcome.UNCHANGED}
+    data_statements = [s for s in statements if not s.lstrip().upper().startswith(("BEGIN", "COMMIT"))]
+    assert len(data_statements) == 2  # one locking SELECT + one UPDATE … FROM unnest(…) for the page
+    assert {(await state_of(db_engine, key)).observed_at for key in keys} == {T0 + timedelta(minutes=1)}
+
+
+async def test_concurrent_batches_update_each_product_once(
+    wide_sessions: Sessions, db_engine: AsyncEngine
+) -> None:
+    keys = [new_sku() for _ in range(30)]
+    async with wide_sessions() as session, session.begin():
+        await apply_observations(session, [obs(key, T0, productName="old") for key in keys])
+    later = T0 + timedelta(minutes=1)
+
+    async def batch(seed: int) -> list[ApplyResult]:
+        shuffled = keys[:]
+        random.Random(seed).shuffle(shuffled)
+        async with wide_sessions() as session, session.begin():
+            return await apply_observations(session, [obs(key, later, productName="new") for key in shuffled])
+
+    results = [
+        r for batch_results in await asyncio.gather(*(batch(i) for i in range(10))) for r in batch_results
+    ]
+
+    assert Counter(r.outcome for r in results) == {Outcome.UPDATED: 30, Outcome.UNCHANGED: 270}
+    for key in keys:
+        assert [c.version for c in await changes_of(db_engine, key)] == [1, 2]
+
+
+async def test_advancing_observed_at_keeps_known_product_id(
+    sessions: Sessions, db_engine: AsyncEngine
+) -> None:
+    keys = [new_sku(), new_sku()]
+    async with sessions() as session, session.begin():
+        await apply_observations(session, [obs(keys[0], T0, productId=9), obs(keys[1], T0, productId=None)])
+
+    later = T0 + timedelta(minutes=1)
+    async with sessions() as session, session.begin():  # every productId in the array is NULL
+        results = await apply_observations(session, [obs(key, later, productId=None) for key in keys])
+
+    assert {r.outcome for r in results} == {Outcome.UNCHANGED}
+    assert [(await state_of(db_engine, key)).product_id for key in keys] == [9, None]
+    assert {(await state_of(db_engine, key)).observed_at for key in keys} == {later}

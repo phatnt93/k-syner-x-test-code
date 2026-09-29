@@ -12,6 +12,8 @@ engine: AsyncEngine = create_async_engine(
     max_overflow=_settings.db_max_overflow,
     pool_pre_ping=True,
     echo=_settings.db_echo,
+    # Fail fast when PostgreSQL is down: the API answers 503 (the sender retries) instead of hanging.
+    connect_args={"connect_timeout": _settings.db_connect_timeout_s},
 )
 
 SessionLocal = async_sessionmaker(engine, expire_on_commit=False)

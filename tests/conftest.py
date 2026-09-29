@@ -15,6 +15,7 @@ ROOT = Path(__file__).resolve().parents[1]
 
 # Tests never depend on the developer's real token; set before any module reads the settings.
 os.environ["INVENTORY_API_TOKEN"] = "test-emulator-token"
+os.environ["WEBHOOK_SECRET"] = "test-webhook-secret"
 
 if sys.platform == "win32":
     # Async psycopg needs a selector loop on Windows (see cdms.loop).
