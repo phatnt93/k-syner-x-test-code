@@ -4,6 +4,7 @@ Both apps run in-process over ASGI transports on the test database; nothing is m
 """
 
 from collections.abc import AsyncIterator
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import httpx
@@ -98,8 +99,13 @@ async def world(db_engine: AsyncEngine) -> AsyncIterator[World]:
 
 
 async def test_mutation_webhook_reaches_cdms_and_polling_agrees(world: World) -> None:
+    # v1 observed well before the mutations: webhook timestamps are whole seconds, so a real-clock poll in the
+    # same second as the mutations would make them look older and STALE (ISSUES I-13)
     await run_poll(
-        world.engine, trigger=Trigger.MANUAL, transport=world.emulator_transport
+        world.engine,
+        trigger=Trigger.MANUAL,
+        transport=world.emulator_transport,
+        now=lambda: datetime.now(UTC) - timedelta(seconds=60),
     )  # CDMS has v1 of all
     mutated = (await world.admin("POST", "/_admin/mutate", count=3, seed=5, notify="webhook"))["mutations"]
     assert [c.status for c in await world.callbacks()] == ["PENDING"] * 3

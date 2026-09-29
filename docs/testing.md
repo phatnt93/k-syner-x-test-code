@@ -1,7 +1,7 @@
 # Running and testing
 
 Status 2026-09-29: core pipeline (C-02), emulator C-03a, polling C-04, webhook + job queue C-05 implemented;
-plus emulator callbacks C-03b, the query / config API C-07 and the `/ui` console C-08, spike test C-10, failure scenarios C-11, cross-mechanism tests C-09, structured logs C-14; 205 tests (unit + integration on `cdms_test`), ruff, mypy strict. Other rows are the planned interface.
+plus emulator callbacks C-03b, the query / config API C-07 and the `/ui` console C-08, spike test C-10, failure scenarios C-11, cross-mechanism tests C-09, structured logs C-14; 206 tests (unit + integration on `cdms_test`), ruff, mypy strict. Other rows are the planned interface.
 
 ## Ports and services
 

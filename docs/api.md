@@ -112,7 +112,8 @@ CORS: the emulator allows browser calls only from `EMULATOR_CORS_ORIGINS` (defau
 `http://localhost:8100` / `http://127.0.0.1:8100`).
 
 Extensions: **E1** auth is `Authorization: Bearer <INVENTORY_API_TOKEN>` (static), not OAuth2; unset token →
-`500 NOT_CONFIGURED`. `PageSize` is capped at 1000. Query parameter names are matched exactly (real Vietful, an
+`500 NOT_CONFIGURED`. It is declared as an `HTTPBearer` security scheme, so `/docs` shows an **Authorize** button
+(paste the token without `Bearer `). `PageSize` is capped at 1000. Query parameter names are matched exactly (real Vietful, an
 ASP.NET API, probably matches them case-insensitively — CDMS always sends the documented names).
 
 ### Admin (emulator-only, `/_admin`, no auth)
@@ -129,6 +130,7 @@ ASP.NET API, probably matches them case-insensitively — CDMS always sends the 
 | GET | `/_admin/callbacks` | `?status=PENDING\|DELIVERED\|FAILED&cursor=&limit=100` → `{ items, nextCursor }`: the callback outbox (event id, attempts, deliveries incl. duplicates, last HTTP status / error) |
 | POST | `/_admin/export.xlsx` | Excel export for the Excel mechanism — **not implemented** (Excel is design only, D13) |
 | GET | `/health` | liveness |
+| GET | `/` | redirects to `/docs` (Swagger); not in the OpenAPI schema |
 
 Callbacks (C-03b, implemented 2026-09-29, `cdms.emulator.callbacks`): events go to the `vietful.callbacks` outbox in the
 mutation's transaction; a sender loop in the emulator process POSTs them to the subscribed endpoint, signed with

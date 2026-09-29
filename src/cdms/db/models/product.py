@@ -1,6 +1,6 @@
 """Current state of each product, shaped after Vietful `ProductDto` (GET /api/v1/Products).
 
-Sample response: docs/project-info/products_res.txt. JSON field → column:
+Fields: `ProductDto` in docs/reference/vietful-api-notes.md. JSON field → column:
 
     productId → product_id        sku → sku                 partnerSKU → partner_sku
     productName → product_name    assetType → asset_type    hasSerial → has_serial

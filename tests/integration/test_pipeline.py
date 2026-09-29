@@ -312,7 +312,7 @@ async def test_concurrent_different_states_keep_a_consistent_history(
     await assert_history_is_consistent(db_engine, sku)
 
 
-# --- batch fast path (docs/project-info/ISSUES.md I-01) ---------------------------------------------------
+# --- batch fast path (docs/ISSUES.md I-01) ---------------------------------------------------
 
 
 def mixed_batch(prefix: str) -> tuple[list[ProductObservation], list[ProductObservation]]:

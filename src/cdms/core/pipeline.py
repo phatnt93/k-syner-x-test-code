@@ -156,7 +156,7 @@ async def apply_observations(
     """Apply a batch (a poll page, an Excel chunk) in one transaction; results are in input order.
 
     Same outcomes as calling `apply_observation` for each item in `partner_sku` order, but cheaper when most
-    items did not change (a poll re-scan): docs/project-info/ISSUES.md I-01.
+    items did not change (a poll re-scan): docs/ISSUES.md I-01.
 
     1. Lock every existing row of the batch in one `SELECT … ORDER BY partner_sku FOR UPDATE` (sorted, so two
        concurrent batches cannot deadlock on these rows) and read version / fingerprint / observed_at.

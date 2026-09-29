@@ -30,7 +30,7 @@ log = logging.getLogger(__name__)
 
 # pg_try_advisory_lock key reserved for the poller ("CDMS" poll, arbitrary but fixed).
 POLL_LOCK_KEY = 0x43444D5301
-# Deadlock / serialization failure: roll back and redo the page (docs/agents/STACK_AND_CONVENTIONS.md).
+# Deadlock / serialization failure: roll back and redo the page (docs/exactly-once.md).
 _RETRY_SQLSTATES = {"40P01", "40001"}
 _PAGE_TX_ATTEMPTS = 3
 

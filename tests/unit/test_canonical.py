@@ -10,7 +10,7 @@ from cdms.core.fingerprint import canonical_json, fingerprint
 
 
 def product(**overrides: Any) -> dict[str, Any]:
-    """A Vietful ProductDto as in docs/project-info/products_res.txt."""
+    """A Vietful ProductDto (docs/reference/vietful-api-notes.md)."""
     base: dict[str, Any] = {
         "productId": 123,
         "sku": "SKU-1",

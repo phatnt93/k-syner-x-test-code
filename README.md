@@ -15,12 +15,12 @@ Prototype dịch vụ thu thập dữ liệu Product từ một **Vietful Invent
  ┌──────────────────────┐   GET /api/v1/Products   ┌──────────────────────────────────────────────┐
  │ Products API (Faker) │ <──────────────────────  │ cdms-worker: poll scheduler ─┐               │
  │ admin: seed / mutate │                          │                              v               │
- │        / faults      │  POST webhook (HMAC)     │ cdms-api (:8100) ─> inbox_event + job ─> job  │
+ │        / faults      │  POST webhook (HMAC)     │ cdms-api (:8100) ─> inbox_event + job ─> job │
  │ callback outbox      │ ───────────────────────> │   202 / 200 duplicate          runner (batch)│
  └──────────────────────┘                          │                              │               │
-                                                   │   pipeline: normalize → fingerprint → detect  │
-                                                   │   → persist (1 transaction) → products +      │
-                                                   │     product_changes (append-only)             │
+                                                   │   pipeline: normalize → fingerprint → detect │
+                                                   │   → persist (1 transaction) → products +     │
+                                                   │     product_changes (append-only)            │
                                                    └──────────────────────────────────────────────┘
 ```
 
@@ -63,8 +63,8 @@ docker compose up -d --build         # postgres (volume riêng) → migrate → 
 - PostgreSQL của compose mở ở `127.0.0.1:5433` (cho script chạy từ host; user / password trong `compose.env`).
 - Dừng: `docker compose down` (thêm `-v` để xóa luôn database).
 
-Compose chạy một image cho cả 4 service: `postgres`, `migrate` (one-shot `alembic upgrade head`), `api`
-(`uvicorn --workers 4`), `worker` (`python -m cdms.worker`), `emulator`.
+Compose chạy `postgres` (image `postgres:17`) và 4 service dùng chung một image `cdms:local`: `migrate` (one-shot
+`alembic upgrade head`), `api` (`uvicorn --workers 4`), `worker` (`python -m cdms.worker`), `emulator`.
 
 ### Cách 2 — Chạy từ source (development)
 
@@ -91,7 +91,7 @@ Chạy 3 process (mỗi process một terminal):
 ### Kiểm tra
 
 ```bash
-pytest                                  # 205 test: unit + integration (trên cdms_test)
+pytest                                  # 206 test: unit + integration (trên cdms_test)
 ruff check . && ruff format --check . && mypy
 python scripts/failure_scenarios.py     # F1–F5, ~2 phút, tự khởi động và dọn process riêng
 python scripts/verify_invariants.py     # kiểm tra invariant trên database cdms
@@ -103,6 +103,8 @@ Chi tiết lệnh, port, test plan: [`docs/testing.md`](docs/testing.md).
 
 Tất cả thao tác dưới đây làm được trên `/ui` (bảng stats, thay đổi, product, inbox, poll run tự refresh 3 s; bấm
 vào một product để xem lịch sử version và diff). Chuẩn bị: **Seed (replace)** 5.000 product → **Subscribe this CDMS**.
+Hướng dẫn chi tiết từng bước (làm gì → kết quả mong đợi → chứng minh giải pháp nào):
+[`test-guide_VI.md`](test-guide_VI.md).
 
 | # | Kịch bản | Cách làm | Kết quả mong đợi |
 |---|---|---|---|
@@ -165,7 +167,7 @@ Excel upload chỉ thiết kế.
   gắn `run_id`, worker gắn `worker_id` / `job_id`. Một webhook lần theo được bằng `event_id` / `inbox_id` từ dòng
   "webhook accepted" (API) đến "webhook event processed" kèm outcome (worker):
   `docker compose logs api worker | grep <event id>`.
-- **Test**: 205 test (unit + integration, gồm concurrency 50 luồng cùng một product), ruff, mypy strict.
+- **Test**: 206 test (unit + integration, gồm concurrency 50 luồng cùng một product), ruff, mypy strict.
 
 ### Partially implemented
 
@@ -220,6 +222,32 @@ Danh sách đầy đủ, số đo: [`docs/ISSUES.md`](docs/ISSUES.md).
 7. **Dọn process sau test.** Dừng `timeout N python …` trên Windows để lại process python con chạy ngầm; một worker
    "lạc" đã xử lý job của một kịch bản failure khác. Luôn kiểm tra danh sách process sau khi dừng.
 
+## Giải pháp cải thiện
+
+Định hướng phát triển thêm.
+
+1. **Load balancing cho API / webhook** — đặt load balancer (Nginx / HAProxy / Traefik) trước nhiều instance API;
+   không cần sticky session vì API stateless và webhook gửi lại vào instance khác vẫn bị chặn trùng bởi
+   `UNIQUE` của `inbox_event`; health check bằng `/ready`; thêm PgBouncer để tổng số kết nối không vượt
+   `max_connections`.
+2. **Tăng số worker khi job dồn** — chạy nhiều worker (`docker compose up -d --scale worker=N`); queue đã dùng
+   `FOR UPDATE SKIP LOCKED` + lease nên các worker không tranh nhau; tự động scale theo `jobBacklog` /
+   `oldestPendingJobAgeSeconds` của `/api/v1/stats`.
+3. **Tách DB log và DB dữ liệu chính, DB cluster** — log ứng dụng đưa sang hệ thống log riêng (Loki / OpenSearch);
+   dữ liệu mang tính log (`product_changes`, `inbox_event`, `job`, `poll_run` cũ) chuyển sang DB lưu trữ / phân tích
+   riêng bằng CDC hoặc job archive, partition theo thời gian; PostgreSQL cluster 1 primary + N replica (Patroni):
+   ghi và pipeline đọc ở primary, API tra cứu đọc ở replica; khi cần tăng ghi thì sharding theo `partner_sku`.
+   Lưu ý: `products`, `product_changes`, `inbox_event`, `job` phải ghi trong cùng một transaction trên primary để
+   giữ exactly-once — chỉ chuyển dữ liệu sang DB khác **sau khi** đã commit.
+4. **Message broker (RabbitMQ) thay queue trên PostgreSQL khi tải rất lớn** — API ghi inbox rồi publish qua
+   transactional outbox; worker consume, ghi DB rồi mới ack; dead-letter queue thay cho trạng thái `DEAD`. Đánh đổi
+   về exactly-once: RabbitMQ chỉ đảm bảo at-least-once (message có thể giao lại, thứ tự không đảm bảo giữa nhiều
+   consumer), nên chống trùng vẫn phải nằm ở DB (unique `inbox_event`, fingerprint, row lock, `observed_at`); thêm một
+   hệ thống cần vận hành và giám sát.
+5. **Metrics và cảnh báo (Prometheus + Grafana)** — endpoint `/metrics` cho API và worker; dashboard throughput,
+   latency, backlog, tuổi job chờ lâu nhất; cảnh báo khi backlog vượt ngưỡng, có job `DEAD`, poll run `FAILED` liên
+   tiếp, `/ready` trả 503.
+
 ## AI usage disclosure
 
 Dự án được làm cùng AI coding agent **Claude (Claude Code)**.
@@ -239,7 +267,7 @@ Dự án được làm cùng AI coding agent **Claude (Claude Code)**.
 - Test (unit, integration, concurrency), script failure scenarios, k6 spike + script kiểm tra invariant.
 - Tài liệu trong `docs/` và README này; phân tích kết quả đo (I-01…I-15).
 
-Mọi code do AI tạo đều được chạy qua test (205 test), ruff, mypy strict, failure scenarios F1–F5 và spike test; các
+Mọi code do AI tạo đều được chạy qua test (206 test), ruff, mypy strict, failure scenarios F1–F5 và spike test; các
 số liệu trong tài liệu là kết quả đo thật trên máy phát triển.
 
 ## Tài liệu
@@ -252,6 +280,7 @@ số liệu trong tài liệu là kết quả đo thật trên máy phát triể
 | API (CDMS + emulator) | [`docs/api.md`](docs/api.md) |
 | Giả định và quyết định thiết kế | [`docs/assumptions.md`](docs/assumptions.md) |
 | Chạy, test, failure scenarios | [`docs/testing.md`](docs/testing.md) |
+| Hướng dẫn test từng bước (thực hành) | [`test-guide_VI.md`](test-guide_VI.md) |
 | Kết quả load test | [`docs/load-test-results.md`](docs/load-test-results.md) |
 | Thiết kế webhook | [`docs/webhook-solution.md`](docs/webhook-solution.md) |
 | Excel upload (chỉ thiết kế) | [`docs/excel-solution.md`](docs/excel-solution.md) |

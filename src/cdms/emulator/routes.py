@@ -5,7 +5,9 @@ import hmac
 import random
 from typing import Annotated, Literal
 
-from fastapi import APIRouter, Depends, Header, Query, Response
+from fastapi import APIRouter, Depends, Query, Response
+from fastapi.responses import RedirectResponse
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -51,14 +53,19 @@ async def apply_faults(session: SessionDep) -> None:
         raise VietfulError(500, "INTERNAL_ERROR", "Transient failure (emulated fault)")
 
 
-async def require_token(authorization: Annotated[str | None, Header()] = None) -> None:
+# auto_error=False: keep Vietful's error body (VietfulError) instead of FastAPI's default 403 / 401
+_bearer = HTTPBearer(auto_error=False, description="Static token = INVENTORY_API_TOKEN (extension E1)")
+
+
+async def require_token(
+    credentials: Annotated[HTTPAuthorizationCredentials | None, Depends(_bearer)],
+) -> None:
     """Static bearer token (extension E1) instead of Vietful's OAuth2 client credentials."""
     expected = get_settings().inventory_api_token
     if expected is None:
         raise VietfulError(500, "NOT_CONFIGURED", "INVENTORY_API_TOKEN is not set")
-    scheme, _, token = (authorization or "").partition(" ")
-    if scheme.lower() != "bearer" or not hmac.compare_digest(
-        token.encode(), expected.get_secret_value().encode()
+    if credentials is None or not hmac.compare_digest(
+        credentials.credentials.encode(), expected.get_secret_value().encode()
     ):
         raise VietfulError(
             401, "UNAUTHORIZED", "Missing or invalid bearer token", headers={"WWW-Authenticate": "Bearer"}
@@ -233,6 +240,12 @@ async def put_faults(session: SessionDep, body: Faults) -> Faults:
 @ops.get("/health")
 async def health() -> dict[str, str]:
     return {"status": "ok"}
+
+
+@ops.get("/", include_in_schema=False)
+async def root() -> RedirectResponse:
+    """The emulator has no UI of its own; land on Swagger."""
+    return RedirectResponse("/docs")
 
 
 async def _notify(session: AsyncSession, mutations: list[VietfulMutation], notify: str) -> None:

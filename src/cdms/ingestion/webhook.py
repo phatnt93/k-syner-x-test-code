@@ -154,7 +154,7 @@ async def process_events(session: AsyncSession, inbox_ids: list[int]) -> dict[in
 
     All items of the batch go through one `apply_observations` call: one lock pass, the fast path for
     unchanged
-    products and a single commit for many events (docs/project-info/ISSUES.md I-02).
+    products and a single commit for many events (docs/ISSUES.md I-02).
     """
     events = {
         event.id: event

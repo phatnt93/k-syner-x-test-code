@@ -55,7 +55,7 @@ export const options = {
 };
 
 export function setup() {
-  if (!SECRET) throw new Error('set -e WEBHOOK_SECRET=<the value in codes/be_fe/.env>');
+  if (!SECRET) throw new Error('set -e WEBHOOK_SECRET=<the value in .env>');
   const run = __ENV.RUN || Math.floor(Date.now() / 1000).toString(36);
   console.log(`run tag: ${run} — verify with: python scripts/verify_invariants.py --wait --prefix LT${run}-`);
   return { run };
