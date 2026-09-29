@@ -11,15 +11,17 @@ from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from cdms.emulator.data import MUTABLE_FIELDS, ProductFaker
-from cdms.emulator.models import VietfulMutation, VietfulProduct, VietfulSettings
-from cdms.emulator.schemas import Faults, ProductInput, product_dto
+from cdms.emulator.models import VietfulCallback, VietfulMutation, VietfulProduct, VietfulSettings
+from cdms.emulator.schemas import CallbackSettings, Faults, ProductInput, product_dto
 
 _CHUNK = 1_000  # rows per INSERT when seeding
 
 
 async def seed(session: AsyncSession, count: int, seed_value: int) -> None:
     """Replace the whole catalogue with `count` Faker products; product ids restart at 1."""
-    await session.execute(text("TRUNCATE vietful.products, vietful.mutations RESTART IDENTITY"))
+    await session.execute(
+        text("TRUNCATE vietful.products, vietful.mutations, vietful.callbacks RESTART IDENTITY")
+    )
     faker = ProductFaker(seed_value)
     rows = [faker.product(number) for number in range(1, count + 1)]
     for start in range(0, len(rows), _CHUNK):
@@ -91,6 +93,27 @@ async def get_faults(session: AsyncSession) -> Faults:
     if row is None:  # the migration inserts it; tolerate a hand-cleaned table
         return Faults()
     return Faults(mode=row.fault_mode, latencyMs=row.fault_latency_ms, errorRate=row.fault_error_rate)  # type: ignore[arg-type]
+
+
+async def get_callback_settings(session: AsyncSession) -> CallbackSettings:
+    row = await session.get(VietfulSettings, 1)
+    if row is None:
+        return CallbackSettings()
+    return CallbackSettings(
+        duplicateRate=row.callback_duplicate_rate,
+        maxRetries=row.callback_max_retries,
+        retryDelayMs=row.callback_retry_delay_ms,
+        concurrency=row.callback_concurrency,
+    )
+
+
+async def callbacks_page(
+    session: AsyncSession, after_id: int, limit: int, status: str | None
+) -> list[VietfulCallback]:
+    query = select(VietfulCallback).where(VietfulCallback.id > after_id)
+    if status:
+        query = query.where(VietfulCallback.status == status)
+    return list((await session.execute(query.order_by(VietfulCallback.id).limit(limit))).scalars())
 
 
 async def put_settings(session: AsyncSession, **values: Any) -> None:

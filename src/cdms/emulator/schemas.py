@@ -102,16 +102,21 @@ class ProductInput(BaseModel):
     categories: list[Category] = []
 
 
+Notify = Literal["none", "webhook"]  # webhook: one PRODUCT_UPSERTED callback per created / changed product
+
+
 class CreateProductsRequest(BaseModel):
     count: int = Field(default=0, ge=0, le=10_000)  # Faker-generated products
     items: list[ProductInput] = Field(default=[], max_length=10_000)  # explicit products
     seed: int | None = None
+    notify: Notify = "none"
 
 
 class MutateRequest(BaseModel):
     count: int = Field(ge=1, le=10_000)
     fields: list[MutableField] | None = Field(default=None, min_length=1)  # default: any mutable field
     seed: int | None = None
+    notify: Notify = "none"
 
 
 class Mutation(BaseModel):
@@ -140,3 +145,35 @@ class Faults(BaseModel):
     mode: FaultMode = "ok"
     latencyMs: int = Field(default=0, ge=0, le=60_000)
     errorRate: float = Field(default=0.0, ge=0.0, le=1.0)
+
+
+class CallbackSettings(BaseModel):
+    """How webhook callbacks are (re)delivered.
+
+    Vietful retries after 15 minutes; `retryDelayMs` is the emulator's fast retry (extension E3).
+    `duplicateRate`: share of delivered events that are sent a second time.
+    """
+
+    duplicateRate: float = Field(default=0.0, ge=0.0, le=1.0)
+    maxRetries: int = Field(default=5, ge=0, le=100)
+    retryDelayMs: int = Field(default=2000, ge=0, le=3_600_000)
+    concurrency: int = Field(default=4, ge=1, le=100)
+
+
+class Callback(BaseModel):
+    id: int
+    eventId: str
+    eventType: str
+    mutationId: int | None
+    status: Literal["PENDING", "DELIVERED", "FAILED"]
+    attempts: int
+    deliveries: int
+    lastStatus: int | None
+    lastError: str | None
+    createdAt: datetime
+    deliveredAt: datetime | None
+
+
+class CallbackPage(BaseModel):
+    items: list[Callback]
+    nextCursor: str | None

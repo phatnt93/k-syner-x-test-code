@@ -3,6 +3,7 @@
 Run: `uvicorn cdms.emulator.main:app --port 8101` (+ `--loop cdms.loop:selector_loop` on Windows).
 """
 
+import asyncio
 import logging
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
@@ -10,7 +11,8 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 
 from cdms.config import get_settings
-from cdms.db.session import engine
+from cdms.db.session import SessionLocal, engine
+from cdms.emulator.callbacks import run_sender
 from cdms.emulator.errors import install_error_handlers
 from cdms.emulator.routes import admin, ops, vietful
 
@@ -19,9 +21,17 @@ log = logging.getLogger(__name__)
 
 @asynccontextmanager
 async def lifespan(_: FastAPI) -> AsyncIterator[None]:
-    if get_settings().inventory_api_token is None:
+    settings = get_settings()
+    if settings.inventory_api_token is None:
         log.warning("INVENTORY_API_TOKEN is not set: every /api/v1 call will fail with 500 NOT_CONFIGURED")
+    if settings.webhook_secret is None:
+        log.warning("WEBHOOK_SECRET is not set: webhook callbacks cannot be signed and stay undelivered")
+    # The Callback Client: delivers queued webhook events while the process runs.
+    stop = asyncio.Event()
+    sender = asyncio.create_task(run_sender(SessionLocal, stop))
     yield
+    stop.set()
+    await sender
     await engine.dispose()
 
 

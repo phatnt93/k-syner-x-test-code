@@ -3,7 +3,7 @@
 from datetime import datetime
 from typing import Any
 
-from sqlalchemy import CheckConstraint, DateTime, Float, Identity, Integer, Text, func, text
+from sqlalchemy import CheckConstraint, DateTime, Float, Identity, Index, Integer, Text, func, text
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -62,6 +62,12 @@ class VietfulSettings(Base):
         CheckConstraint("id = 1", name="single_row"),
         CheckConstraint("fault_mode IN ('ok', 'down', 'slow', 'flaky')", name="fault_mode"),
         CheckConstraint("fault_error_rate >= 0 AND fault_error_rate <= 1", name="fault_error_rate"),
+        CheckConstraint(
+            "callback_duplicate_rate >= 0 AND callback_duplicate_rate <= 1", name="duplicate_rate"
+        ),
+        CheckConstraint("callback_max_retries BETWEEN 0 AND 100", name="max_retries"),
+        CheckConstraint("callback_retry_delay_ms BETWEEN 0 AND 3600000", name="retry_delay_ms"),
+        CheckConstraint("callback_concurrency BETWEEN 1 AND 100", name="concurrency"),
         {"schema": SCHEMA},
     )
 
@@ -69,6 +75,42 @@ class VietfulSettings(Base):
     fault_mode: Mapped[str] = mapped_column(Text, server_default=text("'ok'"))
     fault_latency_ms: Mapped[int] = mapped_column(server_default=text("0"))
     fault_error_rate: Mapped[float] = mapped_column(Float, server_default=text("0"))
-    # Set by POST /api/v1/WebhookSubscribers; callbacks are sent here (C-03b).
+    # Set by POST /api/v1/WebhookSubscribers; callbacks are sent here.
     webhook_endpoint: Mapped[str | None] = mapped_column(Text)
+    # How callbacks are (re)delivered (PUT /_admin/callback). Vietful retries a non-2xx after 15 minutes; the
+    # emulator retries after `callback_retry_delay_ms` (extension E3) so tests and demos do not wait.
+    callback_duplicate_rate: Mapped[float] = mapped_column(Float, server_default=text("0"))
+    callback_max_retries: Mapped[int] = mapped_column(server_default=text("5"))
+    callback_retry_delay_ms: Mapped[int] = mapped_column(server_default=text("2000"))
+    callback_concurrency: Mapped[int] = mapped_column(server_default=text("4"))
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class VietfulCallback(Base):
+    """Outbox of webhook events.
+
+    Written in the same transaction as the mutation it announces, then delivered by the sender loop
+    (`cdms.emulator.callbacks`): a crash of the emulator never loses an event, like a real sender that stores
+    before it sends.
+    """
+
+    __tablename__ = "callbacks"
+    __table_args__ = (
+        CheckConstraint("status IN ('PENDING', 'DELIVERED', 'FAILED')", name="status"),
+        Index(None, "next_attempt_at", postgresql_where=text("status = 'PENDING'")),
+        {"schema": SCHEMA},
+    )
+
+    id: Mapped[int] = mapped_column(Integer, Identity(), primary_key=True)
+    event_id: Mapped[str] = mapped_column(Text, unique=True)  # envelope `id`, kept on every retry / duplicate
+    event_type: Mapped[str] = mapped_column(Text)
+    mutation_id: Mapped[int | None] = mapped_column(Integer)
+    body: Mapped[str] = mapped_column(Text)  # exact JSON sent (and signed) on every delivery
+    status: Mapped[str] = mapped_column(Text, server_default=text("'PENDING'"))
+    attempts: Mapped[int] = mapped_column(server_default=text("0"))  # deliveries that got no 2xx
+    deliveries: Mapped[int] = mapped_column(server_default=text("0"))  # every POST sent, duplicates included
+    next_attempt_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    last_status: Mapped[int | None] = mapped_column(Integer)  # HTTP status of the last delivery
+    last_error: Mapped[str | None] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    delivered_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))

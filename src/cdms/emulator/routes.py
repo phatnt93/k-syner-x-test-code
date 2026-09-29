@@ -3,7 +3,7 @@
 import asyncio
 import hmac
 import random
-from typing import Annotated
+from typing import Annotated, Literal
 
 from fastapi import APIRouter, Depends, Header, Query, Response
 from sqlalchemy import select
@@ -12,10 +12,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from cdms.config import get_settings
 from cdms.db.session import get_session
-from cdms.emulator import catalog
+from cdms.emulator import callbacks, catalog
 from cdms.emulator.errors import VietfulError
-from cdms.emulator.models import VietfulMutation, VietfulProduct
+from cdms.emulator.models import VietfulCallback, VietfulMutation, VietfulProduct
 from cdms.emulator.schemas import (
+    Callback,
+    CallbackPage,
+    CallbackSettings,
     CreateProductsRequest,
     Faults,
     MutateRequest,
@@ -135,6 +138,7 @@ async def seed(session: SessionDep, body: SeedRequest) -> SeedResponse:
 async def create_products(session: SessionDep, body: CreateProductsRequest) -> MutationsResponse:
     try:
         mutations = await catalog.create(session, body.count, body.items, body.seed)
+        await _notify(session, mutations, body.notify)
         await session.commit()
     except IntegrityError as exc:
         raise VietfulError(409, "PRODUCT_EXISTS", "A product with this partnerSKU already exists") from exc
@@ -143,8 +147,10 @@ async def create_products(session: SessionDep, body: CreateProductsRequest) -> M
 
 @admin.post("/mutate", response_model=MutationsResponse)
 async def mutate(session: SessionDep, body: MutateRequest) -> MutationsResponse:
-    """Change 1-2 fields of `count` random products (all products if there are fewer)."""
+    """Change 1-2 fields of `count` random products (all products if there are fewer). `notify: "webhook"`
+    queues one `PRODUCT_UPSERTED` callback per change, in the same transaction."""
     mutations = await catalog.mutate(session, body.count, body.fields, body.seed)
+    await _notify(session, mutations, body.notify)
     await session.commit()
     return MutationsResponse(mutations=[_mutation(m) for m in mutations])
 
@@ -159,6 +165,38 @@ async def mutations(
     page = await catalog.mutations_page(session, int(cursor or 0), limit)
     return MutationPage(
         items=[_mutation(m) for m in page], nextCursor=str(page[-1].id) if len(page) == limit else None
+    )
+
+
+@admin.get("/callback", response_model=CallbackSettings)
+async def get_callback(session: SessionDep) -> CallbackSettings:
+    return await catalog.get_callback_settings(session)
+
+
+@admin.put("/callback", response_model=CallbackSettings)
+async def put_callback(session: SessionDep, body: CallbackSettings) -> CallbackSettings:
+    await catalog.put_settings(
+        session,
+        callback_duplicate_rate=body.duplicateRate,
+        callback_max_retries=body.maxRetries,
+        callback_retry_delay_ms=body.retryDelayMs,
+        callback_concurrency=body.concurrency,
+    )
+    await session.commit()
+    return body
+
+
+@admin.get("/callbacks", response_model=CallbackPage)
+async def list_callbacks(
+    session: SessionDep,
+    status: Annotated[Literal["PENDING", "DELIVERED", "FAILED"] | None, Query()] = None,
+    cursor: Annotated[str | None, Query(pattern=r"^\d+$")] = None,
+    limit: Annotated[int, Query(ge=1, le=1_000)] = 100,
+) -> CallbackPage:
+    """The callback outbox: what was sent, how often, and what the receiver answered."""
+    page = await catalog.callbacks_page(session, int(cursor or 0), limit, status)
+    return CallbackPage(
+        items=[_callback(c) for c in page], nextCursor=str(page[-1].id) if len(page) == limit else None
     )
 
 
@@ -179,6 +217,31 @@ async def put_faults(session: SessionDep, body: Faults) -> Faults:
 @ops.get("/health")
 async def health() -> dict[str, str]:
     return {"status": "ok"}
+
+
+async def _notify(session: AsyncSession, mutations: list[VietfulMutation], notify: str) -> None:
+    if notify != "webhook":
+        return
+    try:
+        await callbacks.enqueue(session, mutations)
+    except callbacks.NoSubscriber as exc:
+        raise VietfulError(409, "NO_SUBSCRIBER", str(exc)) from exc
+
+
+def _callback(c: VietfulCallback) -> Callback:
+    return Callback(
+        id=c.id,
+        eventId=c.event_id,
+        eventType=c.event_type,
+        mutationId=c.mutation_id,
+        status=c.status,  # type: ignore[arg-type]
+        attempts=c.attempts,
+        deliveries=c.deliveries,
+        lastStatus=c.last_status,
+        lastError=c.last_error,
+        createdAt=c.created_at,
+        deliveredAt=c.delivered_at,
+    )
 
 
 def _mutation(m: VietfulMutation) -> Mutation:
