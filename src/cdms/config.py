@@ -35,6 +35,8 @@ class Settings(BaseSettings):
 
     # /ui console: the emulator URL as the browser sees it (default INVENTORY_BASE_URL; differs in Docker).
     ui_emulator_url: str | None = None
+    # /ui console: the webhook URL the emulator must call (default the page's origin; in Docker the service).
+    ui_webhook_endpoint: str | None = None
     # Origins allowed to call the emulator from a browser (the CDMS /ui console); a JSON list in the env.
     emulator_cors_origins: list[str] = ["http://localhost:8100", "http://127.0.0.1:8100"]
 

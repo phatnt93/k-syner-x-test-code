@@ -50,3 +50,10 @@ async def test_emulator_allows_only_the_console_origin(origin: str, allowed: boo
             },
         )
     assert (resp.headers.get("access-control-allow-origin") == origin) is allowed
+
+
+async def test_webhook_endpoint_is_injected(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(get_settings(), "ui_webhook_endpoint", None)
+    assert "const WEBHOOK_ENDPOINT = null;" in (await get_ui()).text  # the page falls back to its origin
+    monkeypatch.setattr(get_settings(), "ui_webhook_endpoint", "http://api:8100/api/v1/webhooks/vietful")
+    assert 'const WEBHOOK_ENDPOINT = "http://api:8100/api/v1/webhooks/vietful";' in (await get_ui()).text

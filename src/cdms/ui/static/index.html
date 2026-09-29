@@ -168,6 +168,8 @@
 <script>
 "use strict";
 const EMULATOR = "__EMULATOR_URL__";  // injected by CDMS (UI_EMULATOR_URL / INVENTORY_BASE_URL)
+// Where the emulator must send webhooks (UI_WEBHOOK_ENDPOINT; null = this page's origin, right when all run on one host)
+const WEBHOOK_ENDPOINT = "__WEBHOOK_ENDPOINT__";
 const $ = (id) => document.getElementById(id);
 
 // --- DOM helpers: all data goes through textContent, never innerHTML ---------------------------------------
@@ -270,7 +272,7 @@ const actions = {
     return `mutated ${r.mutations.length} products (${notify}): ${skus}${r.mutations.length > 5 ? " …" : ""}`;
   },
   async subscribe() {
-    const endpoint = `${location.origin}/api/v1/webhooks/vietful`;
+    const endpoint = WEBHOOK_ENDPOINT || `${location.origin}/api/v1/webhooks/vietful`;
     await emu("/_admin/subscriber", { method: "PUT", body: { endpoint } });
     $("subscriber").textContent = endpoint;
     return `emulator now sends webhooks to ${endpoint}`;

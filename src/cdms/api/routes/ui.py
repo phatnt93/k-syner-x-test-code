@@ -28,7 +28,11 @@ async def console() -> HTMLResponse:
     settings = get_settings()
     emulator_url = settings.ui_emulator_url or settings.inventory_base_url
     # JSON-encoded so the value is a safe JS string literal.
-    html = _template().replace('"__EMULATOR_URL__"', json.dumps(emulator_url.rstrip("/")))
+    html = (
+        _template()
+        .replace('"__EMULATOR_URL__"', json.dumps(emulator_url.rstrip("/")))
+        .replace('"__WEBHOOK_ENDPOINT__"', json.dumps(settings.ui_webhook_endpoint))
+    )
     return HTMLResponse(html, headers={"Cache-Control": "no-store"})
 
 

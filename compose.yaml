@@ -1,0 +1,94 @@
+# Containerized deployment (requirements §11.2, decision D12 / ISSUES I-05).
+#
+#   python scripts/make_compose_env.py     # once: writes compose.env with random secrets (gitignored)
+#   docker compose up -d --build
+#   open http://localhost:8100/ui          # "Seed" the emulator, "Subscribe this CDMS", then mutate / poll
+#   docker compose down                    # add -v to also drop the database volume
+#
+# Services: its own PostgreSQL (named volume), a one-shot migration, cdms-api, cdms-worker and the Vietful
+# emulator — one image, different commands. Host ports: 8100 (CDMS + /ui), 8101 (emulator), 127.0.0.1:5433
+# (PostgreSQL, for scripts on the host).
+name: cdms
+
+x-app: &app
+  image: cdms:local
+  build: .
+  env_file: compose.env
+  environment: &app-env
+    DB_HOST: postgres
+    DB_PORT: "5432"
+    DB_NAME: cdms
+    INVENTORY_BASE_URL: http://emulator:8101  # CDMS → emulator inside the network
+    UI_EMULATOR_URL: http://localhost:8101  # the browser → emulator
+    UI_WEBHOOK_ENDPOINT: http://api:8100/api/v1/webhooks/vietful  # emulator → CDMS inside the network
+    LOG_LEVEL: INFO
+  restart: unless-stopped
+
+services:
+  postgres:
+    image: postgres:17
+    env_file: compose.env  # POSTGRES_USER / POSTGRES_PASSWORD
+    environment:
+      POSTGRES_DB: cdms
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    ports:
+      - "127.0.0.1:5433:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d cdms"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+    restart: unless-stopped
+
+  migrate:
+    <<: *app
+    command: ["alembic", "upgrade", "head"]
+    restart: "no"
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  api:
+    <<: *app
+    # Several processes: one Python process is CPU-bound at ~150-200 webhooks/s (docs/load-test-results.md).
+    # Pool per process x API_WORKERS must stay under PostgreSQL's max_connections (100) with the worker's pool.
+    command: ["sh", "-c", "exec uvicorn cdms.api.main:app --host 0.0.0.0 --port 8100 --workers $${API_WORKERS:-4}"]
+    environment:
+      <<: *app-env
+      DB_POOL_SIZE: "8"
+      DB_MAX_OVERFLOW: "4"
+    ports:
+      - "8100:8100"
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8100/ready', timeout=3)"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+
+  worker:
+    <<: *app
+    command: ["python", "-m", "cdms.worker"]
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+
+  emulator:
+    <<: *app
+    command: ["uvicorn", "cdms.emulator.main:app", "--host", "0.0.0.0", "--port", "8101"]
+    ports:
+      - "8101:8101"
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8101/health', timeout=3)"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+
+volumes:
+  pgdata:
