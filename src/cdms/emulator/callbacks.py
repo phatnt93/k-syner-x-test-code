@@ -182,7 +182,13 @@ async def deliver_due(
                     "status": "FAILED" if gave_up else "PENDING",
                     "next_attempt_at": func.now() + config.retry_delay,
                 }
-                log.warning("callback %d not delivered (attempt %d): %s", delivery.id, attempts, result.error)
+                log.warning(
+                    "callback %d not delivered (attempt %d): %s",
+                    delivery.id,
+                    attempts,
+                    result.error,
+                    extra={"callback_id": delivery.id, "attempt": attempts, "http_status": result.status},
+                )
             await session.execute(
                 update(VietfulCallback).where(VietfulCallback.id == delivery.id).values(**values)
             )

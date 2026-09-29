@@ -16,6 +16,7 @@ from cdms.db.session import SessionLocal, engine
 from cdms.emulator.callbacks import run_sender
 from cdms.emulator.errors import install_error_handlers
 from cdms.emulator.routes import admin, ops, vietful
+from cdms.logs import setup_logging
 
 log = logging.getLogger(__name__)
 
@@ -37,7 +38,7 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
 
 
 def create_app() -> FastAPI:
-    logging.basicConfig(level=get_settings().log_level)
+    setup_logging(get_settings().log_level, get_settings().log_format)
     app = FastAPI(title="Vietful Inventory Service emulator", version="0.1.0", lifespan=lifespan)
     install_error_handlers(app)
     # The CDMS /ui console (another origin) drives the admin API from the browser.

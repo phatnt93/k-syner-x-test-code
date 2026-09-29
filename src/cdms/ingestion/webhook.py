@@ -142,7 +142,13 @@ async def accept(session: AsyncSession, envelope: Envelope, payload: dict[str, A
     return Accepted(inbox_id, duplicate=False)
 
 
-async def process_events(session: AsyncSession, inbox_ids: list[int]) -> dict[int, dict[str, int]]:
+@dataclass(frozen=True)
+class Processed:
+    event_id: str
+    outcome: dict[str, int]  # created / updated / unchanged / stale / invalid
+
+
+async def process_events(session: AsyncSession, inbox_ids: list[int]) -> dict[int, Processed]:
     """Apply the items of these events (in the given order) and mark them PROCESSED; caller owns the
     transaction.
 
@@ -177,7 +183,7 @@ async def process_events(session: AsyncSession, inbox_ids: list[int]) -> dict[in
     for owner, applied in zip(owners, await apply_observations(session, observations), strict=True):
         outcomes[owner][applied.outcome.lower()] += 1
 
-    summary: dict[int, dict[str, int]] = {}
+    summary: dict[int, Processed] = {}
     for inbox_id, counts in outcomes.items():
         outcome = {key: counts[key] for key in ("created", "updated", "unchanged", "stale", "invalid")}
         await session.execute(
@@ -185,7 +191,7 @@ async def process_events(session: AsyncSession, inbox_ids: list[int]) -> dict[in
             .where(InboxEvent.id == inbox_id)
             .values(status=InboxStatus.PROCESSED, outcome=outcome, error=None, processed_at=func.now())
         )
-        summary[inbox_id] = outcome
+        summary[inbox_id] = Processed(events[inbox_id].event_id, outcome)
     return summary
 
 

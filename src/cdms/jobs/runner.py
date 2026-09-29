@@ -20,6 +20,7 @@ from cdms.ingestion import webhook
 from cdms.ingestion.polling import Trigger, run_poll
 from cdms.jobs import queue
 from cdms.jobs.queue import ClaimedJob, JobKind, JobStatus
+from cdms.logs import bind
 
 log = logging.getLogger(__name__)
 
@@ -63,16 +64,17 @@ async def run_job_batch(
 async def run_jobs(engine: AsyncEngine, stop: asyncio.Event, worker_id: str | None = None) -> None:
     """Worker loop: drain the queue, then check again every `IDLE_S`."""
     worker_id = worker_id or default_worker_id()
-    while not stop.is_set():
-        try:
-            claimed = await run_job_batch(engine, worker_id)
-            delay = 0.0 if claimed else IDLE_S
-        except Exception:
-            log.exception("job batch failed; retrying in %.0fs", ERROR_BACKOFF_S)
-            delay = ERROR_BACKOFF_S
-        if delay:
-            with contextlib.suppress(TimeoutError):
-                await asyncio.wait_for(stop.wait(), timeout=delay)
+    with bind(worker_id=worker_id):
+        while not stop.is_set():
+            try:
+                claimed = await run_job_batch(engine, worker_id)
+                delay = 0.0 if claimed else IDLE_S
+            except Exception:
+                log.exception("job batch failed; retrying in %.0fs", ERROR_BACKOFF_S)
+                delay = ERROR_BACKOFF_S
+            if delay:
+                with contextlib.suppress(TimeoutError):
+                    await asyncio.wait_for(stop.wait(), timeout=delay)
 
 
 async def _run_webhook_events(
@@ -103,11 +105,24 @@ async def _process_events(
         mine = [job for job in jobs if job.id in owned]
         if not mine:
             return
-        outcomes = await webhook.process_events(session, [int(job.ref_id) for job in mine])
+        processed = await webhook.process_events(session, [int(job.ref_id) for job in mine])
         await queue.complete(session, [job.id for job in mine])  # same transaction as the changes
         if get_settings().fault_crash_in_job_batch:
             crash(f"FAULT_CRASH_IN_JOB_BATCH: {len(mine)} events applied, dying before the commit")
-    log.info("processed %d webhook events: %s", len(mine), _total(outcomes))
+    # Logged after the commit: a line here means the changes are stored. One line per event, so a delivery can
+    # be followed by its event_id / inbox_id from the API's "webhook accepted" line to its outcome.
+    for job in mine:
+        event = processed[int(job.ref_id)]
+        log.info(
+            "webhook event processed",
+            extra={
+                "event_id": event.event_id,
+                "inbox_id": int(job.ref_id),
+                "job_id": job.id,
+                "outcome": event.outcome,  # nested: `created` is a LogRecord attribute
+            },
+        )
+    log.info("processed %d webhook events: %s", len(mine), _total([p.outcome for p in processed.values()]))
 
 
 async def _run_poll_now(
@@ -119,7 +134,8 @@ async def _run_poll_now(
 ) -> None:
     """A manual poll request. The poll records its result in `poll_run`; the job only says it was handled."""
     try:
-        result = await run_poll(engine, trigger=Trigger.MANUAL, transport=transport)
+        with bind(job_id=job.id):
+            result = await run_poll(engine, trigger=Trigger.MANUAL, transport=transport)
     except Exception as exc:
         await _fail(sessions, job, _describe(exc))
         return
@@ -137,13 +153,20 @@ async def _fail(sessions: async_sessionmaker[AsyncSession], job: ClaimedJob, err
         if job.kind == JobKind.WEBHOOK_EVENT:
             await webhook.mark_failed(session, int(job.ref_id), error, dead=status == JobStatus.DEAD)
     log.error(
-        "job %d (%s %s) attempt %d failed → %s: %s", job.id, job.kind, job.ref_id, job.attempts, status, error
+        "job %d (%s %s) attempt %d failed → %s: %s",
+        job.id,
+        job.kind,
+        job.ref_id,
+        job.attempts,
+        status,
+        error,
+        extra={"job_id": job.id, "job_kind": job.kind, "ref_id": job.ref_id, "job_status": status},
     )
 
 
-def _total(outcomes: dict[int, dict[str, int]]) -> dict[str, int]:
+def _total(outcomes: list[dict[str, int]]) -> dict[str, int]:
     total: dict[str, int] = {}
-    for outcome in outcomes.values():
+    for outcome in outcomes:
         for key, value in outcome.items():
             total[key] = total.get(key, 0) + value
     return total

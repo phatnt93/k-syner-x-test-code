@@ -5,6 +5,7 @@ Every test starts with empty inbox / job / product tables.
 
 import asyncio
 import json
+import logging
 from collections.abc import AsyncIterator
 from datetime import UTC, datetime
 from typing import Any
@@ -23,6 +24,7 @@ from cdms.ingestion import webhook
 from cdms.ingestion.webhook import sign
 from cdms.jobs import queue
 from cdms.jobs.runner import run_job_batch
+from cdms.logs import ContextFilter
 
 SECRET = "test-webhook-secret"
 TS = 1_790_000_000  # envelope timestamp (Unix seconds)
@@ -394,3 +396,32 @@ async def test_worker_crash_inside_the_batch_commits_nothing(
     assert await drain(db_engine, "w2") == 3
     assert {(j.status, j.attempts) for j in await rows(db_engine, select(Job))} == {("DONE", 2)}
     assert len(await rows(db_engine, select(ProductChange))) == 3
+
+
+# --- logs (C-14) --------------------------------------------------------------------------------------------
+
+
+async def test_one_delivery_can_be_followed_through_the_logs(
+    api: httpx.AsyncClient, db_engine: AsyncEngine
+) -> None:
+    captured: list[logging.LogRecord] = []
+    handler = logging.Handler()
+    handler.addFilter(ContextFilter())
+    handler.emit = captured.append  # type: ignore[method-assign]
+    logging.getLogger().addHandler(handler)
+    try:
+        raw = json.dumps(envelope("evt-trace", product("P-1"))).encode()
+        headers = {"content-type": "application/json", "x-vf-hmacsha256": sign(raw, SECRET)}
+        resp = await api.post(
+            "/api/v1/webhooks/vietful", content=raw, headers={**headers, "x-request-id": "r-1"}
+        )
+        await drain(db_engine, "w-trace")
+    finally:
+        logging.getLogger().removeHandler(handler)
+
+    assert resp.status_code == 202
+    [accepted] = [r for r in captured if r.getMessage() == "webhook accepted"]
+    [processed] = [r for r in captured if r.getMessage() == "webhook event processed"]
+    assert (accepted.request_id, accepted.event_id, accepted.inbox_id) == ("r-1", "evt-trace", 1)  # type: ignore[attr-defined]
+    assert (processed.event_id, processed.inbox_id, processed.outcome["created"]) == ("evt-trace", 1, 1)  # type: ignore[attr-defined]
+    assert processed.job_id == 1  # type: ignore[attr-defined]

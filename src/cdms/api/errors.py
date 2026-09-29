@@ -48,6 +48,11 @@ def install_error_handlers(app: FastAPI) -> None:
         return JSONResponse(_body("UNAVAILABLE", "Database unavailable"), status_code=503)
 
     @app.exception_handler(Exception)
-    async def _unexpected(_: Request, exc: Exception) -> JSONResponse:
-        log.exception("unhandled error", exc_info=exc)
-        return JSONResponse(_body("INTERNAL_ERROR", "Internal server error"), status_code=500)
+    async def _unexpected(request: Request, exc: Exception) -> JSONResponse:
+        # Runs outside RequestIdMiddleware (in Starlette's ServerErrorMiddleware): pass the id explicitly.
+        request_id = getattr(request.state, "request_id", None)
+        log.exception("unhandled error", exc_info=exc, extra={"request_id": request_id})
+        headers = {"x-request-id": request_id} if request_id else None
+        return JSONResponse(
+            _body("INTERNAL_ERROR", "Internal server error"), status_code=500, headers=headers
+        )

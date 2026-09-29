@@ -1,4 +1,5 @@
 from functools import lru_cache
+from typing import Literal
 
 from pydantic import SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -24,6 +25,8 @@ class Settings(BaseSettings):
     db_connect_timeout_s: int = 5
 
     log_level: str = "INFO"
+    # "text" (readable, development) or "json" (one object per line, for log collectors; compose uses it).
+    log_format: Literal["text", "json"] = "text"
 
     # Static bearer token of the Vietful emulator (extension E1). The emulator requires it on its Vietful
     # routes; CDMS sends it when polling. No default: set it in `.env`.

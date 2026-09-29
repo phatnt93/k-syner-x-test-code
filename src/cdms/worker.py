@@ -19,6 +19,7 @@ from sqlalchemy.ext.asyncio import AsyncEngine
 from cdms.config import get_settings
 from cdms.ingestion.polling import Trigger, load_config, run_poll
 from cdms.jobs.runner import default_worker_id, run_jobs
+from cdms.logs import bind, setup_logging
 
 log = logging.getLogger("cdms.worker")
 
@@ -55,9 +56,10 @@ async def _main(poll_once: bool) -> int:
             log.info("poll run %d: %s", result.run_id, result.status)
             return 0 if result.error is None else 1
         worker_id = default_worker_id()
-        log.info("worker %s started (Ctrl+C to stop)", worker_id)
-        stop = asyncio.Event()
-        await asyncio.gather(run_scheduler(engine, stop), run_jobs(engine, stop, worker_id))
+        with bind(worker_id=worker_id):  # the scheduler's poll runs too
+            log.info("worker %s started (Ctrl+C to stop)", worker_id)
+            stop = asyncio.Event()
+            await asyncio.gather(run_scheduler(engine, stop), run_jobs(engine, stop, worker_id))
         return 0
     finally:
         await engine.dispose()
@@ -67,9 +69,8 @@ def main() -> None:
     parser = argparse.ArgumentParser(prog="python -m cdms.worker", description=__doc__.split("\n\n")[0])
     parser.add_argument("--poll-once", action="store_true", help="run one manual poll and exit")
     args = parser.parse_args()
-    logging.basicConfig(
-        level=get_settings().log_level, format="%(asctime)s %(levelname)s %(name)s: %(message)s"
-    )
+    settings = get_settings()
+    setup_logging(settings.log_level, settings.log_format)
 
     loop_factory = None
     if sys.platform == "win32":  # async psycopg needs a selector loop on Windows (cdms.loop)

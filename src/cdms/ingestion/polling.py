@@ -24,6 +24,7 @@ from cdms.core.canonical import InvalidProductError
 from cdms.core.pipeline import Outcome, ProductObservation, Source, apply_observations
 from cdms.db.models import PollRun, SyncConfig
 from cdms.ingestion.inventory_client import ClientConfig, InventoryClient, InventoryError, Sleep
+from cdms.logs import bind
 
 log = logging.getLogger(__name__)
 
@@ -121,6 +122,20 @@ async def _run_locked(
             await session.execute(insert(PollRun).values(trigger=trigger).returning(PollRun.id))
         ).scalar_one()
 
+    with bind(
+        run_id=run_id, trigger=str(trigger)
+    ):  # every line of the run, the HTTP client's retries included
+        return await _scan(sessions, config, run_id, transport, now, sleep)
+
+
+async def _scan(
+    sessions: async_sessionmaker[AsyncSession],
+    config: SyncConfig,
+    run_id: int,
+    transport: httpx.AsyncBaseTransport | None,
+    now: Clock,
+    sleep: Sleep,
+) -> PollResult:
     counts = dict.fromkeys(("created", "updated", "unchanged", "stale", "invalid"), 0)
     pages = 0
     try:
@@ -148,7 +163,13 @@ async def _run_locked(
         return PollResult(run_id, RunStatus.FAILED, pages, counts, error)
 
     await _finish(sessions, run_id, RunStatus.SUCCEEDED, None)
-    log.info("poll run %d succeeded: %d pages, %s", run_id, pages, counts)
+    log.info(
+        "poll run %d succeeded: %d pages, %s",
+        run_id,
+        pages,
+        counts,
+        extra={"pages": pages, "outcome": counts},
+    )
     return PollResult(run_id, RunStatus.SUCCEEDED, pages, counts)
 
 

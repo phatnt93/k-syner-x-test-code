@@ -1,5 +1,6 @@
 """`POST /api/v1/webhooks/vietful` — the Callback Client's endpoint (docs/webhook-solution.md)."""
 
+import logging
 from typing import Annotated, Literal
 
 from fastapi import APIRouter, Query, Request
@@ -17,6 +18,7 @@ from cdms.ingestion import webhook
 from cdms.schemas.api import InboxEventDetail, InboxEventOut, Page
 
 router = APIRouter(prefix="/api/v1/webhooks", tags=["webhooks"])
+log = logging.getLogger(__name__)
 
 
 @router.post(
@@ -36,20 +38,26 @@ async def receive(request: Request, session: SessionDep) -> JSONResponse:
     if secret is None:
         raise AppError(503, "UNAVAILABLE", "Webhook receiver is not configured (WEBHOOK_SECRET)")
     body = await request.body()
+    event_id: str | None = None
     try:
         webhook.verify_signature(
             body, request.headers.get(webhook.SIGNATURE_HEADER), secret.get_secret_value()
         )
         envelope, payload = webhook.parse(body)
+        event_id = envelope.id
         async with session.begin():
             accepted = await webhook.accept(session, envelope, payload)
         if get_settings().fault_crash_after_inbox_commit and not accepted.duplicate:
             crash("FAULT_CRASH_AFTER_INBOX_COMMIT: event stored, dying before the response")
     except webhook.WebhookRejected as exc:
+        log.warning("webhook rejected: %s", exc.code, extra={"event_id": event_id, "status": exc.status})
         raise AppError(exc.status, exc.code, exc.message) from exc
     except (OperationalError, InterfaceError) as exc:  # database unreachable: the sender must retry
+        log.warning("webhook not stored: database unavailable", extra={"event_id": event_id, "status": 503})
         raise AppError(503, "UNAVAILABLE", "Database unavailable") from exc
 
+    fields = {"event_id": envelope.id, "event_type": envelope.event, "inbox_id": accepted.inbox_id}
+    log.info("webhook %s", "duplicate" if accepted.duplicate else "accepted", extra=fields)
     if accepted.duplicate:
         return JSONResponse({"status": "duplicate", "inboxId": accepted.inbox_id}, status_code=200)
     return JSONResponse({"status": "accepted", "inboxId": accepted.inbox_id}, status_code=202)

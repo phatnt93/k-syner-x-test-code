@@ -41,7 +41,7 @@ def test_cdms_never_queries_the_emulator_schema() -> None:
 
 
 def test_emulator_uses_only_shared_infrastructure() -> None:
-    allowed = ("cdms.config", "cdms.db.base", "cdms.db.session", "cdms.emulator")
+    allowed = ("cdms.config", "cdms.db.base", "cdms.db.session", "cdms.logs", "cdms.emulator")
     used = {
         module
         for path in EMULATOR.rglob("*.py")

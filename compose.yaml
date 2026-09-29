@@ -22,6 +22,7 @@ x-app: &app
     UI_EMULATOR_URL: http://localhost:8101  # the browser → emulator
     UI_WEBHOOK_ENDPOINT: http://api:8100/api/v1/webhooks/vietful  # emulator → CDMS inside the network
     LOG_LEVEL: INFO
+    LOG_FORMAT: json  # structured logs: `docker compose logs api worker | grep <event id>`
   restart: unless-stopped
 
 services:
