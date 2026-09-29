@@ -33,6 +33,11 @@ class Settings(BaseSettings):
     # Shared secret of the webhook HMAC (`x-vf-hmacsha256`, D5): CDMS verifies, the emulator signs.
     webhook_secret: SecretStr | None = None
 
+    # /ui console: the emulator URL as the browser sees it (default INVENTORY_BASE_URL; differs in Docker).
+    ui_emulator_url: str | None = None
+    # Origins allowed to call the emulator from a browser (the CDMS /ui console); a JSON list in the env.
+    emulator_cors_origins: list[str] = ["http://localhost:8100", "http://127.0.0.1:8100"]
+
     def _url(self, database: str) -> str:
         # URL.create escapes special characters in the password.
         url = URL.create(

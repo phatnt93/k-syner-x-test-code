@@ -14,7 +14,7 @@ from cdms.config import get_settings
 from cdms.db.session import get_session
 from cdms.emulator import callbacks, catalog
 from cdms.emulator.errors import VietfulError
-from cdms.emulator.models import VietfulCallback, VietfulMutation, VietfulProduct
+from cdms.emulator.models import VietfulCallback, VietfulMutation, VietfulProduct, VietfulSettings
 from cdms.emulator.schemas import (
     Callback,
     CallbackPage,
@@ -28,6 +28,7 @@ from cdms.emulator.schemas import (
     ProductDto,
     SeedRequest,
     SeedResponse,
+    Subscriber,
     WebhookSubscriber,
     product_dto,
 )
@@ -166,6 +167,21 @@ async def mutations(
     return MutationPage(
         items=[_mutation(m) for m in page], nextCursor=str(page[-1].id) if len(page) == limit else None
     )
+
+
+@admin.get("/subscriber", response_model=Subscriber)
+async def get_subscriber(session: SessionDep) -> Subscriber:
+    endpoint = (await session.execute(select(VietfulSettings.webhook_endpoint))).scalar_one_or_none()
+    return Subscriber(endpoint=endpoint)
+
+
+@admin.put("/subscriber", response_model=Subscriber)
+async def put_subscriber(session: SessionDep, body: Subscriber) -> Subscriber:
+    """Same effect as Vietful's `POST /api/v1/WebhookSubscribers` without the bearer token (for the /ui
+    console); `endpoint: null` unsubscribes."""
+    await catalog.put_settings(session, webhook_endpoint=body.endpoint)
+    await session.commit()
+    return body
 
 
 @admin.get("/callback", response_model=CallbackSettings)

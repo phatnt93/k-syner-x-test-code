@@ -1,0 +1,429 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>CDMS console</title>
+<link rel="icon" href="data:,">
+<style>
+  :root {
+    --bg: #f6f7f9; --panel: #ffffff; --text: #1d2330; --muted: #677084; --line: #e2e5eb;
+    --accent: #2f6fde; --accent-text: #ffffff; --ok: #1f8a4c; --warn: #b7791f; --bad: #c53030;
+    --chip: #eef1f6; --mono: ui-monospace, SFMono-Regular, Consolas, monospace;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #12151b; --panel: #1a1f28; --text: #e4e7ee; --muted: #9aa3b5; --line: #2a313d;
+      --accent: #5b8ff0; --accent-text: #0d1117; --ok: #48bb78; --warn: #ecc94b; --bad: #fc8181; --chip: #242b36;
+    }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text); font: 14px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif; }
+  header { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; padding: 12px 20px; background: var(--panel); border-bottom: 1px solid var(--line); position: sticky; top: 0; z-index: 2; }
+  header h1 { font-size: 16px; margin: 0 8px 0 0; }
+  header .spacer { flex: 1; }
+  main { padding: 16px 20px 40px; max-width: 1400px; margin: 0 auto; display: grid; gap: 16px; }
+  .cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 12px; }
+  .card, section { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; }
+  .card { padding: 12px 14px; }
+  .card .label { color: var(--muted); font-size: 12px; text-transform: uppercase; letter-spacing: .04em; }
+  .card .value { font-size: 24px; font-weight: 600; margin-top: 2px; }
+  .card .sub { color: var(--muted); font-size: 12px; margin-top: 2px; }
+  .columns { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+  @media (max-width: 900px) { .columns { grid-template-columns: 1fr; } }
+  section { padding: 14px 16px; min-width: 0; }
+  section h2 { font-size: 14px; margin: 0 0 10px; }
+  .row { display: flex; flex-wrap: wrap; align-items: end; gap: 8px; padding: 8px 0; border-top: 1px dashed var(--line); }
+  .row:first-of-type { border-top: 0; }
+  .row .title { width: 100%; font-weight: 600; font-size: 13px; }
+  .hint { color: var(--muted); font-size: 12px; width: 100%; }
+  label { display: grid; gap: 2px; font-size: 12px; color: var(--muted); }
+  input, select { font: inherit; color: var(--text); background: var(--bg); border: 1px solid var(--line); border-radius: 6px; padding: 5px 8px; min-width: 0; }
+  input[type=number] { width: 96px; }
+  input[type=checkbox] { width: auto; }
+  label.inline { display: flex; align-items: center; gap: 6px; color: var(--text); font-size: 13px; }
+  button { font: inherit; border: 1px solid var(--line); background: var(--chip); color: var(--text); border-radius: 6px; padding: 5px 12px; cursor: pointer; }
+  button.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-text); }
+  button:disabled { opacity: .5; cursor: wait; }
+  .pill { display: inline-flex; align-items: center; gap: 6px; padding: 2px 10px; border-radius: 999px; background: var(--chip); font-size: 12px; }
+  .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--muted); }
+  .dot.ok { background: var(--ok); } .dot.bad { background: var(--bad); }
+  .tag { display: inline-block; padding: 0 7px; border-radius: 4px; font-size: 12px; background: var(--chip); white-space: nowrap; }
+  .tag.ok { color: var(--ok); } .tag.warn { color: var(--warn); } .tag.bad { color: var(--bad); }
+  .tabs { display: flex; flex-wrap: wrap; gap: 4px; margin-bottom: 10px; border-bottom: 1px solid var(--line); }
+  .tabs button { border: 0; border-bottom: 2px solid transparent; border-radius: 0; background: none; padding: 6px 12px; color: var(--muted); }
+  .tabs button.active { color: var(--text); border-bottom-color: var(--accent); }
+  .toolbar { display: flex; flex-wrap: wrap; gap: 8px; align-items: end; margin-bottom: 8px; }
+  .table-wrap { overflow-x: auto; }
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  th, td { text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--line); vertical-align: top; }
+  th { color: var(--muted); font-weight: 500; font-size: 12px; white-space: nowrap; }
+  td.num { text-align: right; font-variant-numeric: tabular-nums; }
+  td .mono, .mono { font-family: var(--mono); font-size: 12px; }
+  a.link { color: var(--accent); cursor: pointer; text-decoration: none; }
+  .diff { font-family: var(--mono); font-size: 12px; }
+  .diff .old { color: var(--bad); text-decoration: line-through; }
+  .diff .new { color: var(--ok); }
+  .empty { color: var(--muted); padding: 16px 8px; }
+  #log { font-family: var(--mono); font-size: 12px; max-height: 190px; overflow: auto; background: var(--bg); border: 1px solid var(--line); border-radius: 6px; padding: 6px 8px; }
+  #log div { white-space: pre-wrap; word-break: break-word; }
+  #log .err { color: var(--bad); }
+  dialog { border: 1px solid var(--line); border-radius: 8px; background: var(--panel); color: var(--text); width: min(900px, 94vw); padding: 0; }
+  dialog::backdrop { background: rgba(0, 0, 0, .4); }
+  dialog .head { display: flex; justify-content: space-between; align-items: center; padding: 12px 16px; border-bottom: 1px solid var(--line); }
+  dialog .body { padding: 12px 16px; max-height: 70vh; overflow: auto; }
+</style>
+</head>
+<body>
+<header>
+  <h1>CDMS console</h1>
+  <span class="pill"><span class="dot" id="api-dot"></span>CDMS API</span>
+  <span class="pill"><span class="dot" id="emu-dot"></span>Emulator <span class="mono" id="emu-url"></span></span>
+  <span class="spacer"></span>
+  <label class="inline"><input type="checkbox" id="auto" checked> Auto-refresh (3 s)</label>
+  <button id="refresh">Refresh</button>
+</header>
+
+<main>
+  <div class="cards" id="cards"></div>
+
+  <div class="columns">
+    <section>
+      <h2>Vietful emulator</h2>
+      <div class="row">
+        <div class="title">Catalogue</div>
+        <label>Products <input type="number" id="seed-count" value="5000" min="0" max="100000"></label>
+        <label>Seed <input type="number" id="seed-seed" value="42"></label>
+        <button data-action="seed">Seed (replace)</button>
+        <div class="hint">Replaces the emulator's products and clears its mutation log and callback outbox.</div>
+      </div>
+      <div class="row">
+        <div class="title">Change products</div>
+        <label>Count <input type="number" id="mutate-count" value="20" min="1" max="10000"></label>
+        <label class="inline"><input type="checkbox" id="mutate-webhook" checked> send webhook</label>
+        <button class="primary" data-action="mutate">Mutate</button>
+        <div class="hint">Without webhook, only polling will notice the change.</div>
+      </div>
+      <div class="row">
+        <div class="title">Webhook subscription</div>
+        <span class="mono" id="subscriber">–</span>
+        <button data-action="subscribe">Subscribe this CDMS</button>
+        <button data-action="unsubscribe">Unsubscribe</button>
+      </div>
+      <div class="row">
+        <div class="title">Callback delivery</div>
+        <label>Duplicate rate <input type="number" id="cb-dup" step="0.1" min="0" max="1"></label>
+        <label>Max retries <input type="number" id="cb-retries" min="0" max="100"></label>
+        <label>Retry delay ms <input type="number" id="cb-delay" min="0"></label>
+        <label>Concurrency <input type="number" id="cb-conc" min="1" max="100"></label>
+        <button data-action="callback">Apply</button>
+      </div>
+      <div class="row">
+        <div class="title">Faults (Products API)</div>
+        <label>Mode
+          <select id="fault-mode"><option>ok</option><option>down</option><option>slow</option><option>flaky</option></select>
+        </label>
+        <label>Latency ms <input type="number" id="fault-latency" min="0" max="60000"></label>
+        <label>Error rate <input type="number" id="fault-rate" step="0.1" min="0" max="1"></label>
+        <button data-action="faults">Apply</button>
+      </div>
+    </section>
+
+    <section>
+      <h2>CDMS</h2>
+      <div class="row">
+        <div class="title">Polling</div>
+        <button class="primary" data-action="poll">Poll now</button>
+        <div class="hint">Queues a manual poll; the worker runs it (skipped if a run is in progress).</div>
+      </div>
+      <div class="row">
+        <div class="title">Sync config <span class="hint" id="config-updated"></span></div>
+        <label class="inline"><input type="checkbox" id="cfg-enabled"> scheduled polling</label>
+        <label>Interval s <input type="number" id="cfg-interval" min="5" max="86400"></label>
+        <label>Page size <input type="number" id="cfg-page" min="1" max="500"></label>
+        <label>Connect ms <input type="number" id="cfg-connect" min="100" max="60000"></label>
+        <label>Read ms <input type="number" id="cfg-read" min="100" max="300000"></label>
+        <label>HTTP attempts <input type="number" id="cfg-attempts" min="1" max="10"></label>
+        <label>Job attempts <input type="number" id="cfg-job" min="1" max="100"></label>
+        <button data-action="config">Save</button>
+      </div>
+      <div class="row">
+        <div class="title">Activity</div>
+        <div id="log" style="width:100%"></div>
+      </div>
+    </section>
+  </div>
+
+  <section>
+    <div class="tabs" id="tabs"></div>
+    <div id="panel"></div>
+  </section>
+</main>
+
+<dialog id="history">
+  <div class="head"><strong id="history-title"></strong><button id="history-close">Close</button></div>
+  <div class="body" id="history-body"></div>
+</dialog>
+
+<script>
+"use strict";
+const EMULATOR = "__EMULATOR_URL__";  // injected by CDMS (UI_EMULATOR_URL / INVENTORY_BASE_URL)
+const $ = (id) => document.getElementById(id);
+
+// --- DOM helpers: all data goes through textContent, never innerHTML ---------------------------------------
+function h(tag, props = {}, ...children) {
+  const el = document.createElement(tag);
+  for (const [k, v] of Object.entries(props)) {
+    if (k === "class") el.className = v;
+    else if (k.startsWith("on")) el.addEventListener(k.slice(2), v);
+    else el.setAttribute(k, v);
+  }
+  for (const c of children.flat()) if (c !== null && c !== undefined) el.append(c instanceof Node ? c : String(c));
+  return el;
+}
+const fmtTime = (t) => (t ? new Date(t).toLocaleTimeString() : "–");
+const fmtDate = (t) => (t ? new Date(t).toLocaleString() : "–");
+const tag = (text, kind = "") => h("span", { class: `tag ${kind}` }, text);
+const statusKind = (s) => ({ SUCCEEDED: "ok", PROCESSED: "ok", DONE: "ok", DELIVERED: "ok", CREATED: "ok",
+  RUNNING: "warn", PENDING: "warn", UPDATED: "warn", IGNORED: "", FAILED: "bad", DEAD: "bad", ABORTED: "bad" }[s] || "");
+
+function log(message, error = false) {
+  const line = h("div", { class: error ? "err" : "" }, `${new Date().toLocaleTimeString()}  ${message}`);
+  $("log").prepend(line);
+  while ($("log").childElementCount > 80) $("log").lastChild.remove();
+}
+
+// --- HTTP ------------------------------------------------------------------------------------------------
+async function call(base, path, { method = "GET", body } = {}) {
+  const resp = await fetch(base + path, {
+    method, headers: body ? { "content-type": "application/json" } : {}, body: body ? JSON.stringify(body) : undefined,
+  });
+  const text = await resp.text();
+  const data = text ? JSON.parse(text) : null;
+  if (!resp.ok) {
+    const msg = data?.error?.message || data?.errorMessage || resp.statusText;
+    throw new Error(`${method} ${path} → ${resp.status} ${msg}`);
+  }
+  return data;
+}
+const cdms = (path, opts) => call("", path, opts);
+const emu = (path, opts) => call(EMULATOR, path, opts);
+
+// --- stats cards ----------------------------------------------------------------------------------------------
+function card(label, value, sub) {
+  return h("div", { class: "card" }, h("div", { class: "label" }, label), h("div", { class: "value" }, value),
+    h("div", { class: "sub" }, sub));
+}
+async function loadStats() {
+  try {
+    const s = await cdms("/api/v1/stats");
+    $("api-dot").className = "dot ok";
+    const run = s.lastPollRun;
+    const src = s.changesBySource, inbox = s.inboxByStatus;
+    const runDuration = run && run.finishedAt ? `${((new Date(run.finishedAt) - new Date(run.startedAt)) / 1000).toFixed(1)} s` : "running";
+    $("cards").replaceChildren(
+      card("Products", s.products.toLocaleString(), "current states in CDMS"),
+      card("Changes", Object.values(s.changesByType).reduce((a, b) => a + b, 0).toLocaleString(),
+        `polling ${src.POLLING || 0} · webhook ${src.WEBHOOK || 0}`),
+      card("Webhook inbox", (inbox.PROCESSED || 0).toLocaleString(),
+        `processed · pending ${inbox.PENDING || 0} · dead ${inbox.DEAD || 0} · ignored ${inbox.IGNORED || 0}`),
+      card("Job backlog", s.jobBacklog,
+        s.oldestPendingJobAgeSeconds != null ? `oldest waiting ${s.oldestPendingJobAgeSeconds.toFixed(1)} s` : "queue empty"),
+      card("Last poll", run ? run.status : "none",
+        run ? `#${run.id} ${fmtTime(run.startedAt)} · ${runDuration} · +${run.created} ~${run.updated} =${run.unchanged}` : "no run yet"),
+    );
+  } catch (e) {
+    $("api-dot").className = "dot bad";
+    $("cards").replaceChildren(card("CDMS API", "unreachable", e.message));
+  }
+}
+
+// --- forms -----------------------------------------------------------------------------------------------------
+const num = (id) => Number($(id).value);
+async function loadForms() {
+  try {
+    const c = await cdms("/api/v1/config");
+    $("cfg-enabled").checked = c.pollEnabled; $("cfg-interval").value = c.pollIntervalSeconds;
+    $("cfg-page").value = c.pollPageSize; $("cfg-connect").value = c.httpConnectTimeoutMs;
+    $("cfg-read").value = c.httpReadTimeoutMs; $("cfg-attempts").value = c.httpMaxAttempts;
+    $("cfg-job").value = c.jobMaxAttempts; $("config-updated").textContent = `updated ${fmtDate(c.updatedAt)}`;
+  } catch (e) { log(e.message, true); }
+  try {
+    const [f, cb, sub] = await Promise.all([emu("/_admin/faults"), emu("/_admin/callback"), emu("/_admin/subscriber")]);
+    $("emu-dot").className = "dot ok";
+    $("fault-mode").value = f.mode; $("fault-latency").value = f.latencyMs; $("fault-rate").value = f.errorRate;
+    $("cb-dup").value = cb.duplicateRate; $("cb-retries").value = cb.maxRetries;
+    $("cb-delay").value = cb.retryDelayMs; $("cb-conc").value = cb.concurrency;
+    $("subscriber").textContent = sub.endpoint || "not subscribed";
+  } catch (e) { $("emu-dot").className = "dot bad"; log(`emulator: ${e.message}`, true); }
+}
+
+const actions = {
+  async seed() {
+    const r = await emu("/_admin/seed", { method: "POST", body: { count: num("seed-count"), seed: num("seed-seed") } });
+    return `emulator seeded with ${r.count} products (seed ${r.seed})`;
+  },
+  async mutate() {
+    const notify = $("mutate-webhook").checked ? "webhook" : "none";
+    const r = await emu("/_admin/mutate", { method: "POST", body: { count: num("mutate-count"), notify } });
+    const skus = r.mutations.slice(0, 5).map((m) => `${m.partnerSKU}[${m.changedFields.join(",")}]`).join(" ");
+    return `mutated ${r.mutations.length} products (${notify}): ${skus}${r.mutations.length > 5 ? " …" : ""}`;
+  },
+  async subscribe() {
+    const endpoint = `${location.origin}/api/v1/webhooks/vietful`;
+    await emu("/_admin/subscriber", { method: "PUT", body: { endpoint } });
+    $("subscriber").textContent = endpoint;
+    return `emulator now sends webhooks to ${endpoint}`;
+  },
+  async unsubscribe() {
+    await emu("/_admin/subscriber", { method: "PUT", body: { endpoint: null } });
+    $("subscriber").textContent = "not subscribed";
+    return "webhook subscription removed";
+  },
+  async callback() {
+    const body = { duplicateRate: num("cb-dup"), maxRetries: num("cb-retries"), retryDelayMs: num("cb-delay"), concurrency: num("cb-conc") };
+    await emu("/_admin/callback", { method: "PUT", body });
+    return `callback delivery: ${JSON.stringify(body)}`;
+  },
+  async faults() {
+    const body = { mode: $("fault-mode").value, latencyMs: num("fault-latency"), errorRate: num("fault-rate") };
+    await emu("/_admin/faults", { method: "PUT", body });
+    return `emulator faults: ${JSON.stringify(body)}`;
+  },
+  async poll() {
+    const r = await cdms("/api/v1/polling/run", { method: "POST" });
+    return `manual poll queued (job ${r.jobId})`;
+  },
+  async config() {
+    const body = { pollEnabled: $("cfg-enabled").checked, pollIntervalSeconds: num("cfg-interval"), pollPageSize: num("cfg-page"),
+      httpConnectTimeoutMs: num("cfg-connect"), httpReadTimeoutMs: num("cfg-read"), httpMaxAttempts: num("cfg-attempts"), jobMaxAttempts: num("cfg-job") };
+    const c = await cdms("/api/v1/config", { method: "PUT", body });
+    $("config-updated").textContent = `updated ${fmtDate(c.updatedAt)}`;
+    return "sync config saved (applies on the worker's next tick)";
+  },
+};
+document.addEventListener("click", async (event) => {
+  const button = event.target.closest("button[data-action]");
+  if (!button) return;
+  button.disabled = true;
+  try { log(await actions[button.dataset.action]()); refreshAll(); }
+  catch (e) { log(e.message, true); }
+  finally { button.disabled = false; }
+});
+
+// --- tables -------------------------------------------------------------------------------------------------
+function diffView(diff) {
+  const entries = Object.entries(diff || {});
+  if (!entries.length) return h("span", { class: "hint" }, "—");
+  return h("div", { class: "diff" }, entries.map(([field, [oldV, newV]]) => h("div", {}, `${field}: `,
+    h("span", { class: "old" }, JSON.stringify(oldV)), " → ", h("span", { class: "new" }, JSON.stringify(newV)))));
+}
+const skuLink = (sku) => h("a", { class: "link", onclick: () => showHistory(sku) }, sku);
+
+const tabs = {
+  changes: {
+    title: "Changes",
+    filters: () => [h("label", {}, "Source", h("select", { id: "f-source" },
+      ["", "POLLING", "WEBHOOK"].map((s) => h("option", { value: s }, s || "all"))))],
+    url: (cursor) => `/api/v1/changes?order=desc&limit=50${$("f-source")?.value ? `&source=${$("f-source").value}` : ""}${cursor ? `&cursor=${cursor}` : ""}`,
+    head: ["#", "Recorded", "Product", "v", "Type", "Source", "Diff"],
+    row: (c) => [c.id, fmtTime(c.recordedAt), skuLink(c.partnerSKU), c.version, tag(c.changeType, statusKind(c.changeType)),
+      tag(c.source), c.changeType === "CREATED" ? h("span", { class: "hint" }, "new product") : diffView(c.diff)],
+  },
+  products: {
+    title: "Products",
+    filters: () => [h("label", {}, "Search", h("input", { id: "f-q", placeholder: "partnerSKU, sku or name" }))],
+    url: (cursor) => `/api/v1/products?limit=50${$("f-q")?.value ? `&q=${encodeURIComponent($("f-q").value)}` : ""}${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ""}`,
+    head: ["partnerSKU", "Name", "Active", "Units", "v", "Observed"],
+    row: (p) => [skuLink(p.partnerSKU), p.productName, p.isActive ? "yes" : "no", p.units.join(", "), p.version, fmtDate(p.observedAt)],
+  },
+  events: {
+    title: "Webhook events",
+    filters: () => [h("label", {}, "Status", h("select", { id: "f-status" },
+      ["", "PENDING", "PROCESSED", "IGNORED", "DEAD"].map((s) => h("option", { value: s }, s || "all"))))],
+    url: (cursor) => `/api/v1/webhooks/events?limit=50${$("f-status")?.value ? `&status=${$("f-status").value}` : ""}${cursor ? `&cursor=${cursor}` : ""}`,
+    head: ["#", "Received", "Event id", "Type", "Status", "Items", "Outcome", "Error"],
+    row: (e) => [e.id, fmtTime(e.receivedAt), h("span", { class: "mono" }, e.eventId.slice(0, 13)), e.eventType,
+      tag(e.status, statusKind(e.status)), e.items,
+      e.outcome ? Object.entries(e.outcome).filter(([, v]) => v).map(([k, v]) => `${k} ${v}`).join(" · ") : "–", e.error || ""],
+  },
+  runs: {
+    title: "Poll runs",
+    url: (cursor) => `/api/v1/polling/runs?limit=20${cursor ? `&cursor=${cursor}` : ""}`,
+    head: ["#", "Started", "Trigger", "Status", "Pages", "Created", "Updated", "Unchanged", "Stale", "Invalid", "Duration", "Error"],
+    row: (r) => [r.id, fmtTime(r.startedAt), r.trigger, tag(r.status, statusKind(r.status)), r.pages, r.created, r.updated,
+      r.unchanged, r.stale, r.invalid,
+      r.finishedAt ? `${((new Date(r.finishedAt) - new Date(r.startedAt)) / 1000).toFixed(1)} s` : "…", r.error || ""],
+  },
+  callbacks: {
+    title: "Emulator callbacks",
+    emulator: true,
+    url: (cursor) => `/_admin/callbacks?limit=1000${cursor ? `&cursor=${cursor}` : ""}`,
+    head: ["#", "Created", "Event id", "Status", "Failed attempts", "Deliveries", "Last HTTP", "Error"],
+    reverse: true,
+    row: (c) => [c.id, fmtTime(c.createdAt), h("span", { class: "mono" }, c.eventId.slice(0, 13)), tag(c.status, statusKind(c.status)),
+      c.attempts, c.deliveries, c.lastStatus ?? "–", c.lastError || ""],
+  },
+};
+let current = "changes";
+
+function renderTabs() {
+  $("tabs").replaceChildren(...Object.entries(tabs).map(([key, t]) =>
+    h("button", { class: key === current ? "active" : "", onclick: () => { current = key; renderTabs(); loadTab(true); } }, t.title)));
+}
+async function loadTab(rebuild = false, cursor = null) {
+  const t = tabs[current];
+  if (rebuild) {
+    const filters = t.filters ? t.filters() : [];
+    filters.forEach((f) => f.addEventListener("change", () => loadTab()));
+    $("panel").replaceChildren(h("div", { class: "toolbar" }, filters),
+      h("div", { class: "table-wrap" }, h("table", {}, h("thead", {}, h("tr", {}, t.head.map((c) => h("th", {}, c)))), h("tbody", { id: "rows" }))),
+      h("div", { id: "more" }));
+  }
+  try {
+    const page = await (t.emulator ? emu : cdms)(t.url(cursor));
+    const items = t.reverse ? [...page.items].reverse() : page.items;
+    const rows = items.map((item) => h("tr", {}, t.row(item).map((v) => h("td", { class: typeof v === "number" ? "num" : "" }, v))));
+    if (cursor) $("rows").append(...rows); else $("rows").replaceChildren(...rows);
+    if (!$("rows").childElementCount) $("rows").append(h("tr", {}, h("td", { class: "empty", colspan: t.head.length }, "Nothing yet.")));
+    $("more").replaceChildren(page.nextCursor && !t.reverse ? h("button", { onclick: () => loadTab(false, page.nextCursor) }, "Load more") : "");
+  } catch (e) {
+    $("rows").replaceChildren(h("tr", {}, h("td", { class: "empty", colspan: t.head.length }, e.message)));
+  }
+}
+
+// --- product history dialog ------------------------------------------------------------------------------
+async function showHistory(sku) {
+  $("history-title").textContent = `${sku} — version history`;
+  $("history-body").replaceChildren("Loading…");
+  $("history").showModal();
+  try {
+    const [product, history] = await Promise.all([
+      cdms(`/api/v1/products/${encodeURIComponent(sku)}`), cdms(`/api/v1/products/${encodeURIComponent(sku)}/changes?limit=500`)]);
+    $("history-body").replaceChildren(
+      h("p", {}, `Current: v${product.version} · observed ${fmtDate(product.observedAt)} · fingerprint `,
+        h("span", { class: "mono" }, product.fingerprint.slice(0, 16) + "…")),
+      h("table", {}, h("thead", {}, h("tr", {}, ["v", "Type", "Source", "Source ref", "Observed", "Recorded", "Diff"].map((c) => h("th", {}, c)))),
+        h("tbody", {}, history.items.map((c) => h("tr", {},
+          h("td", { class: "num" }, c.version), h("td", {}, tag(c.changeType, statusKind(c.changeType))), h("td", {}, tag(c.source)),
+          h("td", { class: "mono" }, c.sourceRef), h("td", {}, fmtDate(c.observedAt)), h("td", {}, fmtDate(c.recordedAt)),
+          h("td", {}, c.changeType === "CREATED" ? h("span", { class: "hint" }, "first version") : diffView(c.diff)))))));
+  } catch (e) { $("history-body").replaceChildren(e.message); }
+}
+$("history-close").addEventListener("click", () => $("history").close());
+
+// --- refresh loop -----------------------------------------------------------------------------------------
+async function checkEmulator() {
+  try { await emu("/health"); $("emu-dot").className = "dot ok"; } catch { $("emu-dot").className = "dot bad"; }
+}
+function refreshAll() { loadStats(); checkEmulator(); loadTab(); }
+$("refresh").addEventListener("click", () => { refreshAll(); loadForms(); });
+$("emu-url").textContent = EMULATOR;
+setInterval(() => { if ($("auto").checked && !$("history").open) refreshAll(); }, 3000);
+renderTabs();
+loadTab(true);
+loadStats();
+loadForms();
+</script>
+</body>
+</html>

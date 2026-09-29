@@ -54,6 +54,12 @@ class WebhookSubscriber(BaseModel):
     endpoint: str = Field(min_length=1, max_length=2048)
 
 
+class Subscriber(BaseModel):
+    """Admin view of the subscription (`endpoint` null = none)."""
+
+    endpoint: str | None = Field(default=None, max_length=2048)
+
+
 def product_dto(product: VietfulProduct) -> dict[str, Any]:
     return {
         "productId": product.product_id,

@@ -9,6 +9,7 @@ from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
 
 from cdms.config import get_settings
 from cdms.db.session import SessionLocal, engine
@@ -39,6 +40,13 @@ def create_app() -> FastAPI:
     logging.basicConfig(level=get_settings().log_level)
     app = FastAPI(title="Vietful Inventory Service emulator", version="0.1.0", lifespan=lifespan)
     install_error_handlers(app)
+    # The CDMS /ui console (another origin) drives the admin API from the browser.
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=get_settings().emulator_cors_origins,
+        allow_methods=["GET", "POST", "PUT"],
+        allow_headers=["content-type"],
+    )
     app.include_router(ops)
     app.include_router(vietful)
     app.include_router(admin)

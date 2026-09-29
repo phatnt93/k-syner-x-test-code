@@ -242,3 +242,13 @@ async def test_slow_and_flaky(client: httpx.AsyncClient) -> None:
     assert (await client.get("/api/v1/Products", headers=AUTH)).status_code == 500
     await client.put("/_admin/faults", json={"mode": "flaky", "errorRate": 0.0})
     assert (await client.get("/api/v1/Products", headers=AUTH)).status_code == 200
+
+
+async def test_admin_subscriber_needs_no_token(client: httpx.AsyncClient) -> None:
+    endpoint = "http://localhost:8100/api/v1/webhooks/vietful"
+    assert (await client.put("/_admin/subscriber", json={"endpoint": endpoint})).json() == {
+        "endpoint": endpoint
+    }
+    assert (await client.get("/_admin/subscriber")).json() == {"endpoint": endpoint}
+    await client.put("/_admin/subscriber", json={"endpoint": None})
+    assert (await client.get("/_admin/subscriber")).json() == {"endpoint": None}
