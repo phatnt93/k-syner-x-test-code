@@ -15,9 +15,9 @@ from sqlalchemy import func, or_, select, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from cdms.config import get_settings
 from cdms.db.models import Job, SyncConfig
 
-LEASE = timedelta(seconds=60)
 BACKOFF_BASE_S = 2
 BACKOFF_MAX_S = 300
 
@@ -82,7 +82,7 @@ async def claim(session: AsyncSession, worker_id: str, limit: int) -> list[Claim
             status=JobStatus.RUNNING,
             attempts=Job.attempts + 1,
             locked_by=worker_id,
-            locked_until=func.now() + LEASE,
+            locked_until=func.now() + timedelta(seconds=get_settings().job_lease_seconds),
         )
         .returning(Job.id, Job.kind, Job.ref_id, Job.attempts, Job.max_attempts)
     )

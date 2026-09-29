@@ -38,6 +38,14 @@ class Settings(BaseSettings):
     # Origins allowed to call the emulator from a browser (the CDMS /ui console); a JSON list in the env.
     emulator_cors_origins: list[str] = ["http://localhost:8100", "http://127.0.0.1:8100"]
 
+    # Job lease: a job claimed by a worker that dies is re-claimed after this (D7).
+    job_lease_seconds: int = 60
+
+    # Failure-scenario hooks (docs/testing.md F1 / F2, scripts/failure_scenarios.py), never set in normal
+    # runs: the process kills itself (os._exit) at the worst moment to prove nothing is lost or duplicated.
+    fault_crash_after_inbox_commit: bool = False  # API: webhook committed, response not sent yet
+    fault_crash_in_job_batch: bool = False  # worker: webhook batch applied, transaction not committed yet
+
     def _url(self, database: str) -> str:
         # URL.create escapes special characters in the password.
         url = URL.create(

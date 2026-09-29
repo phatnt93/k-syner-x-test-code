@@ -14,6 +14,8 @@ import socket
 import httpx
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
+from cdms.config import get_settings
+from cdms.faults import crash
 from cdms.ingestion import webhook
 from cdms.ingestion.polling import Trigger, run_poll
 from cdms.jobs import queue
@@ -103,6 +105,8 @@ async def _process_events(
             return
         outcomes = await webhook.process_events(session, [int(job.ref_id) for job in mine])
         await queue.complete(session, [job.id for job in mine])  # same transaction as the changes
+        if get_settings().fault_crash_in_job_batch:
+            crash(f"FAULT_CRASH_IN_JOB_BATCH: {len(mine)} events applied, dying before the commit")
     log.info("processed %d webhook events: %s", len(mine), _total(outcomes))
 
 

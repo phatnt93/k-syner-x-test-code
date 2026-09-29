@@ -12,6 +12,7 @@ from cdms.api.errors import AppError
 from cdms.api.paging import Cursor, Limit, int_cursor, next_cursor
 from cdms.config import get_settings
 from cdms.db.models import InboxEvent
+from cdms.faults import crash
 from cdms.ingestion import webhook
 from cdms.schemas.api import InboxEventDetail, InboxEventOut, Page
 
@@ -42,6 +43,8 @@ async def receive(request: Request, session: SessionDep) -> JSONResponse:
         envelope, payload = webhook.parse(body)
         async with session.begin():
             accepted = await webhook.accept(session, envelope, payload)
+        if get_settings().fault_crash_after_inbox_commit and not accepted.duplicate:
+            crash("FAULT_CRASH_AFTER_INBOX_COMMIT: event stored, dying before the response")
     except webhook.WebhookRejected as exc:
         raise AppError(exc.status, exc.code, exc.message) from exc
     except (OperationalError, InterfaceError) as exc:  # database unreachable: the sender must retry

@@ -340,3 +340,57 @@ async def test_polling_run_endpoint_enqueues_a_manual_poll(
     [run] = await rows(db_engine, select(PollRun))
     assert (run.trigger, run.status, run.created) == ("MANUAL", "SUCCEEDED", 3)
     assert (job.kind, job.status, job.last_error) == ("poll_now", "DONE", f"poll_run {run.id}")
+
+
+# --- crash hooks of the failure scenarios (docs/testing.md F1 / F2) -----------------------------------------
+
+
+class SimulatedCrash(BaseException):
+    """Stands in for os._exit: a BaseException skips `except Exception` handlers, like a dead process."""
+
+
+def fake_crash(reason: str) -> None:
+    raise SimulatedCrash(reason)
+
+
+async def test_api_crash_after_inbox_commit_then_retry_is_a_duplicate(
+    api: httpx.AsyncClient, db_engine: AsyncEngine, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from cdms.api.routes import webhooks as route
+
+    body = envelope("evt-1", product("P-1"))
+    monkeypatch.setattr(get_settings(), "fault_crash_after_inbox_commit", True)
+    monkeypatch.setattr(route, "crash", fake_crash)
+    with pytest.raises(SimulatedCrash):  # the sender gets no answer
+        await post(api, body)
+    assert len(await rows(db_engine, select(InboxEvent))) == 1  # ...but the event is durable
+
+    monkeypatch.setattr(get_settings(), "fault_crash_after_inbox_commit", False)
+    retry = await post(api, body)  # the sender retries after the restart
+    assert retry.status_code == 200 and retry.json()["status"] == "duplicate"
+    await drain(db_engine)
+    assert len(await rows(db_engine, select(ProductChange))) == 1
+
+
+async def test_worker_crash_inside_the_batch_commits_nothing(
+    api: httpx.AsyncClient, db_engine: AsyncEngine, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from cdms.jobs import runner
+
+    for i in range(3):
+        await post(api, envelope(f"evt-{i}", product(f"P-{i}")))
+    monkeypatch.setattr(get_settings(), "fault_crash_in_job_batch", True)
+    monkeypatch.setattr(runner, "crash", fake_crash)
+    with pytest.raises(SimulatedCrash):
+        await run_job_batch(db_engine, "doomed-worker")
+
+    assert {e.status for e in await rows(db_engine, select(InboxEvent))} == {"PENDING"}
+    assert await rows(db_engine, select(ProductChange)) == []  # the batch transaction was never committed
+    assert {(j.status, j.attempts) for j in await rows(db_engine, select(Job))} == {("RUNNING", 1)}  # leased
+
+    monkeypatch.setattr(get_settings(), "fault_crash_in_job_batch", False)
+    async with db_engine.begin() as conn:  # the lease of the dead worker runs out
+        await conn.execute(update(Job).values(locked_until=func.now() - text("interval '1 second'")))
+    assert await drain(db_engine, "w2") == 3
+    assert {(j.status, j.attempts) for j in await rows(db_engine, select(Job))} == {("DONE", 2)}
+    assert len(await rows(db_engine, select(ProductChange))) == 3
