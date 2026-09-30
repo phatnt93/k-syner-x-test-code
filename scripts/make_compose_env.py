@@ -3,14 +3,31 @@
     python scripts/make_compose_env.py [--force]
 
 The containerized stack has its own PostgreSQL, so none of these values are shared with local development.
+PostgreSQL reads POSTGRES_PASSWORD only when its volume is first initialized: a new compose.env next to
+an existing volume makes `migrate` fail with "password authentication failed" — `docker compose down -v`
+first (the script warns when that volume exists).
 """
 
 import argparse
 import secrets
+import subprocess
 import sys
 from pathlib import Path
 
 TARGET = Path(__file__).resolve().parents[1] / "compose.env"
+# `name: cdms` + the `pgdata` volume of compose.yaml.
+PG_VOLUME = "cdms_pgdata"
+
+
+def _volume_exists(name: str) -> bool:
+    """True when docker reports the volume; False when it does not, or docker is unavailable."""
+    try:
+        result = subprocess.run(
+            ["docker", "volume", "inspect", name], capture_output=True, timeout=10, check=False
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+    return result.returncode == 0
 
 
 def main() -> int:
@@ -37,6 +54,13 @@ def main() -> int:
         encoding="utf-8",
     )
     print(f"wrote {TARGET.name}")
+    if _volume_exists(PG_VOLUME):
+        print(
+            f"WARNING: volume {PG_VOLUME} already exists and keeps the password it was created with;\n"
+            f"  the new {TARGET.name} will not match it (migrate: password authentication failed).\n"
+            "  Drop it before starting: docker compose down -v   (deletes the stack's database)",
+            file=sys.stderr,
+        )
     return 0
 
 

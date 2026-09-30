@@ -62,6 +62,15 @@ docker compose up -d --build         # postgres (volume riêng) → migrate → 
 - Swagger: `http://localhost:8100/docs` (CDMS), `http://localhost:8101/docs` (emulator).
 - PostgreSQL của compose mở ở `127.0.0.1:5433` (cho script chạy từ host; user / password trong `compose.env`).
 - Dừng: `docker compose down` (thêm `-v` để xóa luôn database).
+- **Quy tắc cần nhớ:** mỗi lần tạo lại `compose.env`, phải xóa volume trước rồi mới `up` — PostgreSQL chỉ đọc
+  `POSTGRES_PASSWORD` khi khởi tạo volume, nên `compose.env` mới cạnh volume cũ làm `migrate` lỗi
+  `password authentication failed` (script sẽ cảnh báo nếu volume `cdms_pgdata` còn tồn tại). Thứ tự đúng:
+
+  ```bash
+  docker compose down -v                       # xóa luôn database của stack
+  python scripts/make_compose_env.py --force
+  docker compose up -d --build
+  ```
 
 Compose chạy `postgres` (image `postgres:17`) và 4 service dùng chung một image `cdms:local`: `migrate` (one-shot
 `alembic upgrade head`), `api` (`uvicorn --workers 4`), `worker` (`python -m cdms.worker`), `emulator`.

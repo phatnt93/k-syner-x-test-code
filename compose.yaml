@@ -5,6 +5,9 @@
 #   open http://localhost:8100/ui          # "Seed" the emulator, "Subscribe this CDMS", then mutate / poll
 #   docker compose down                    # add -v to also drop the database volume
 #
+# A new compose.env (--force) needs `docker compose down -v` first: PostgreSQL keeps the password its volume
+# was created with, so `migrate` would fail with "password authentication failed".
+#
 # Services: its own PostgreSQL (named volume), a one-shot migration, cdms-api, cdms-worker and the Vietful
 # emulator — one image, different commands. Host ports: 8100 (CDMS + /ui), 8101 (emulator), 127.0.0.1:5433
 # (PostgreSQL, for scripts on the host).

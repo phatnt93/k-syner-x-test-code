@@ -25,6 +25,16 @@ database). Host ports: 8100 (CDMS), 8101 (emulator), `127.0.0.1:5433` (PostgreSQ
 `DB_HOST=localhost DB_PORT=5433 DB_USER/DB_PASSWORD` from `compose.env`). Project name `cdms`: nothing else running on
 the Docker host is touched.
 
+**Regenerating `compose.env`:** drop the volume first, then `up`. PostgreSQL reads `POSTGRES_PASSWORD` only when its
+volume is initialized, so a new `compose.env` next to an old volume makes `migrate` exit 1 with
+`password authentication failed` (the script warns when volume `cdms_pgdata` exists). Order:
+
+```bash
+docker compose down -v                       # also deletes the stack's database
+python scripts/make_compose_env.py --force
+docker compose up -d --build
+```
+
 ## Setup
 
 ```bash
